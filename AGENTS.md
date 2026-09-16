@@ -58,5 +58,5 @@ Required checks:
 - `regression-suite`: `command` (packages/**/*.py, scripts/run_tests.py, tests/test_*.py)
 - Rule `completion-evidence`: Require runner exit codes and persisted receipts before claiming completion.
 
-Policy SHA-256: `bffff7433d758e6c4bd421b5006afc97a29e060d60bb59a4c726f79abd31942e`
+Policy SHA-256: `fe49f34f0ee0d5df2de36e3916084977f2bc5f31d1e397ef351459dde9e3733a`
 <!-- exitzero:end -->

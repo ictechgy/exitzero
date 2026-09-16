@@ -164,6 +164,7 @@ exitzero hooks install --adapter pre-commit
 exitzero hooks run --slot CI --format json
 exitzero report --format json
 exitzero plugin harness-eval --scenario examples/eval-repair   # opt-in bounded eval
+exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP proxy
 ```
 
 Global `--root` and `--policy` options go before the subcommand. `check` runs
@@ -172,6 +173,11 @@ verification commands. `plugin harness-eval` replays a scripted multi-turn
 scenario against the gate inside a temporary copy; each turn's expectations
 are scored, skipped scenarios are reported separately, and the report lands
 under `.exitzero/evals/`. See [the eval example](examples/eval-repair).
+`plugin mcp-gateway` spawns one upstream MCP server and proxies stdio
+JSON-RPC; `tools/call` is authorized against TOML allow/deny patterns
+(deny-by-default) and every decision lands in `.exitzero/mcp-gateway/`
+audit logs. See [the plugin contract](docs/PLUGIN_API.md) for the config
+schema.
 
 Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
 through exit codes:

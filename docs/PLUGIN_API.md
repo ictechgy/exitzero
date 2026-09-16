@@ -78,6 +78,37 @@ hook entries (`matcher` plus a nested `hooks` list); empty hook slots and
 `mcp_servers` table, which follows the same command-or-url and typed-option
 rules.
 
-The gateway and ledger packages only expose extension boundaries in v1. They
-provide no proxy, network access, PR publishing, or automatic rollback. Core emits
-the versioned receipt schema now so these plugins can be added later.
+`exitzero plugin mcp-gateway --config PATH` runs a thin local MCP gateway.
+PATH selects a TOML document inside the repository:
+
+```toml
+schema_version = 1
+description = "optional"
+
+[upstream]
+command = "python3"            # required; spawned without a shell
+args = ["-m", "example_server"] # optional list of strings
+cwd = "subdir"                  # optional repo-relative working directory
+[upstream.env]                  # optional string map merged over the environment
+
+[allow]
+tools = ["read_*", "get_status"] # required glob patterns
+[deny]
+tools = ["exec_*"]               # optional; deny always wins
+```
+
+The gateway spawns the upstream MCP server as a subprocess and proxies
+newline-delimited JSON-RPC between the client's stdio and the server. Only
+`tools/call` is gated: a tool matching `[deny]` or matching nothing in
+`[allow]` is answered with a JSON-RPC `-32000` error and never forwarded —
+deny-by-default. `tools/list` responses drop denied tools before reaching the
+client; every other message is forwarded verbatim. Each decision is appended
+to `.exitzero/mcp-gateway/audit-<run_id>.jsonl` (`session_start`, `tool_call`,
+`tools_filtered`, `session_end` events). The session ends when the client
+closes stdin; a clean session exits 0 while configuration, spawn, audit or
+premature-upstream failures exit 2. The gateway never inspects tool
+arguments, never contacts the network, and is stdio-only.
+
+The ledger package only exposes an extension boundary in v1 — no PR
+publishing or automatic rollback. Core emits the versioned receipt schema now
+so these plugins can be added later.

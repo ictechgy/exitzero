@@ -161,6 +161,7 @@ exitzero hooks install --adapter pre-commit
 exitzero hooks run --slot CI --format json
 exitzero report --format json
 exitzero plugin harness-eval --scenario examples/eval-repair   # 선택적 바운디드 eval
+exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP 프록시
 ```
 
 전역 `--root`와 `--policy` 옵션은 서브커맨드 앞에 옵니다. `check`는 설정
@@ -168,7 +169,11 @@ exitzero plugin harness-eval --scenario examples/eval-repair   # 선택적 바�
 않습니다. `plugin harness-eval`은 스크립트된 멀티턴 시나리오를 임시
 사본에서 게이트에 리플레이합니다. 턴별 기대값을 채점하고, 스킵된
 시나리오는 따로 보고하며, 리포트는 `.exitzero/evals/`에 남습니다.
-[eval 예제](examples/eval-repair)를 참고하세요.
+[eval 예제](examples/eval-repair)를 참고하세요. `plugin mcp-gateway`는
+업스트림 MCP 서버 하나를 서브프로세스로 띄워 stdio JSON-RPC를
+프록시합니다. `tools/call`은 TOML allow/deny 패턴으로 인가되고(기본 거부)
+모든 결정이 `.exitzero/mcp-gateway/` 감사 로그에 남습니다. 설정 스키마는
+[플러그인 계약](docs/PLUGIN_API.md)을 참고하세요.
 
 게이트 명령 — `check`, `lint-config`, `hooks run` — 은 종료 코드로 결과를
 보고합니다:

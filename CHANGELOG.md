@@ -1,6 +1,16 @@
 # Changelog
 
-## Unreleased — v1.1 in progress
+## Unreleased
+
+**v1.2**
+
+- `exitzero plugin mcp-gateway --config PATH` is a thin local MCP gateway:
+  it spawns one upstream MCP server and proxies stdio JSON-RPC, authorizes
+  `tools/call` against TOML allow/deny glob patterns (deny-by-default), drops
+  denied tools from `tools/list`, and appends every decision to
+  `.exitzero/mcp-gateway/audit-*.jsonl`.
+
+**v1.1**
 
 - Each fixture now declares versioned expectations in `fixture.toml`
   (`schema_version = 1`); the runner reads manifests instead of a hardcoded

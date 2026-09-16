@@ -13,9 +13,14 @@
   `mcp_servers`, empty hook slots and repo-relative hook command paths, and
   `harness-eval` replays bounded scripted multi-turn scenarios (see
   `examples/eval-repair`).
-- **v1.2 — local MCP/tool gateway:** a thin local proxy, YAML tool allowlist,
-  explicit authorization decisions and audit events via core hook interfaces.
+- **v1.2 — local MCP/tool gateway:** a thin local proxy, TOML tool allowlist,
+  explicit authorization decisions and audit events under `.exitzero/`.
   No cloud control plane or Kubernetes requirement.
+  Shipped: `exitzero plugin mcp-gateway --config PATH` spawns one upstream
+  MCP server as a subprocess and proxies newline-delimited JSON-RPC on stdio;
+  `tools/call` is authorized against allow/deny glob patterns
+  (deny-by-default, deny wins), `tools/list` responses drop denied tools, and
+  every decision is appended to `.exitzero/mcp-gateway/audit-*.jsonl`.
 - **v1.3 — reviewable ledger:** attach one run record to a PR, aggregate related
   receipts and propose rollback hints. Publishing and rollback actions remain
   explicit; core receipts continue to work without this plugin.
