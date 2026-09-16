@@ -109,6 +109,13 @@ closes stdin; a clean session exits 0 while configuration, spawn, audit or
 premature-upstream failures exit 2. The gateway never inspects tool
 arguments, never contacts the network, and is stdio-only.
 
-The ledger package only exposes an extension boundary in v1 — no PR
-publishing or automatic rollback. Core emits the versioned receipt schema now
-so these plugins can be added later.
+`exitzero plugin ledger-publish` aggregates `.exitzero/runs/` receipts into
+one run record under `.exitzero/ledger/` — a versioned JSON record plus a
+Markdown body fit for a PR comment. Flags: `--since ISO8601` filters receipts
+by `started_at`; `--base REF` scopes the git history searched for suspect
+commits; `--pr N` posts the Markdown via `gh pr comment` and is the only
+external write — publishing stays explicit, and rollback hints (implicated
+paths plus recent commits touching them) stay read-only suggestions. The
+record reports aggregate counts, per-rule findings, corrupt receipts, and run
+references; it exits 0 on success and 2 on usage or operational failure —
+it is a report, not a gate.

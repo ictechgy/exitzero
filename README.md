@@ -165,6 +165,7 @@ exitzero hooks run --slot CI --format json
 exitzero report --format json
 exitzero plugin harness-eval --scenario examples/eval-repair   # opt-in bounded eval
 exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP proxy
+exitzero plugin ledger-publish                                 # aggregate run record
 ```
 
 Global `--root` and `--policy` options go before the subcommand. `check` runs
@@ -177,7 +178,9 @@ under `.exitzero/evals/`. See [the eval example](examples/eval-repair).
 JSON-RPC; `tools/call` is authorized against TOML allow/deny patterns
 (deny-by-default) and every decision lands in `.exitzero/mcp-gateway/`
 audit logs. See [the plugin contract](docs/PLUGIN_API.md) for the config
-schema.
+schema. `plugin ledger-publish` rolls receipts into a run record with
+rollback hints under `.exitzero/ledger/`; `--pr N` posts it via `gh` —
+explicitly, and only then.
 
 Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
 through exit codes:
@@ -242,26 +245,28 @@ Policies, selected plugins and command checks are trusted executable
 configuration. Review them before running an unfamiliar repository. Static
 checks and config lint make no network requests. Command checks can run
 arbitrary local programs; choose offline commands to keep the whole gate
-offline. This is not an execution sandbox or the future MCP allowlist
-gateway. Config files listed under `harness.config_files` are read only when
+offline. This is not an execution sandbox; the MCP gateway only authorizes
+tool names, never arguments. Config files listed under `harness.config_files` are read only when
 explicitly selected; an installed Cursor hooks file is fingerprinted
 automatically so drift is detectable. Do not include credential files.
 Known credential-like paths and symlink targets are rejected. Path filtering
 is not a universal secret detector.
 
 There is no cloud service, model hosting, model training, full agent
-evaluation, proxy gateway, PR publisher or automatic rollback in v1.
+evaluation or automatic rollback. The MCP gateway stays a local stdio proxy;
+`ledger-publish` writes to GitHub only through an explicit `--pr` flag.
 
 ## Structure and contributing
 
 ```text
 packages/core              policy, CLI, hook slots, plugin loader, receipts
 packages/plugin-verify     verification rules and command checks
-packages/plugin-harness    configuration lint; eval command stub
-packages/plugin-mcp-gateway  v1.2 interface stub
-packages/plugin-ledger       v1.3 interface stub
+packages/plugin-harness    configuration lint; bounded eval command
+packages/plugin-mcp-gateway  stdio MCP proxy with a TOML tool allowlist
+packages/plugin-ledger       run-record aggregation and rollback hints
 fixtures/                  manifest-scored cases (one declared live-only skip)
 examples/sample/           runnable error-text/type/order contract example
+examples/eval-repair/      scripted multi-turn eval scenario
 ```
 
 Read [Plugin API](docs/PLUGIN_API.md), [roadmap](ROADMAP.md), and

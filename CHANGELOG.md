@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+**v1.3**
+
+- `exitzero plugin ledger-publish` aggregates `.exitzero/runs/` receipts
+  into a versioned run record (`.exitzero/ledger/record-*.json` + Markdown
+  body), ranks paths implicated by non-passing runs, and lists recent
+  commits touching them (`--since`, `--base`). `--pr N` posts the body via
+  `gh pr comment` — the only external write, always explicit.
+
 **v1.2**
 
 - `exitzero plugin mcp-gateway --config PATH` is a thin local MCP gateway:

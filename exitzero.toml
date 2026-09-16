@@ -1,5 +1,5 @@
 version = 1
-plugins = ["exitzero_verify", "exitzero_harness", "exitzero_mcp_gateway"]
+plugins = ["exitzero_verify", "exitzero_harness", "exitzero_mcp_gateway", "exitzero_ledger"]
 
 [[checks]]
 id = "syntax"

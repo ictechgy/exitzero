@@ -24,6 +24,11 @@
 - **v1.3 — reviewable ledger:** attach one run record to a PR, aggregate related
   receipts and propose rollback hints. Publishing and rollback actions remain
   explicit; core receipts continue to work without this plugin.
+  Shipped: `exitzero plugin ledger-publish` aggregates `.exitzero/runs/`
+  receipts into `.exitzero/ledger/` JSON+Markdown run records, ranks
+  implicated paths from non-passing runs, lists recent commits touching them
+  (`--base` scopes the range), and posts the body via `gh pr comment` only
+  when `--pr N` is passed explicitly.
 
 Before broad adoption: test real Cursor releases, improve Python import analysis,
 add richer machine-output integrations, and measure check latency on larger repos.

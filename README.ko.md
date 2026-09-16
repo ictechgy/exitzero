@@ -162,6 +162,7 @@ exitzero hooks run --slot CI --format json
 exitzero report --format json
 exitzero plugin harness-eval --scenario examples/eval-repair   # 선택적 바운디드 eval
 exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP 프록시
+exitzero plugin ledger-publish                                 # 실행 기록 집계
 ```
 
 전역 `--root`와 `--policy` 옵션은 서브커맨드 앞에 옵니다. `check`는 설정
@@ -173,7 +174,9 @@ exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP 프�
 업스트림 MCP 서버 하나를 서브프로세스로 띄워 stdio JSON-RPC를
 프록시합니다. `tools/call`은 TOML allow/deny 패턴으로 인가되고(기본 거부)
 모든 결정이 `.exitzero/mcp-gateway/` 감사 로그에 남습니다. 설정 스키마는
-[플러그인 계약](docs/PLUGIN_API.md)을 참고하세요.
+[플러그인 계약](docs/PLUGIN_API.md)을 참고하세요. `plugin ledger-publish`는
+리싯을 롤백 힌트가 포함된 실행 기록으로 집계해 `.exitzero/ledger/`에
+남깁니다. `--pr N`을 주면 그때만 `gh`로 게시합니다.
 
 게이트 명령 — `check`, `lint-config`, `hooks run` — 은 종료 코드로 결과를
 보고합니다:
@@ -235,27 +238,29 @@ python3 scripts/ci.py
 낯선 저장소에서는 실행 전에 검토하세요. 정적 검사와 설정 린트는 네트워크
 요청을 하지 않습니다. command 검사는 임의의 로컬 프로그램을 실행할 수
 있으므로, 게이트 전체를 오프라인으로 유지하려면 오프라인 명령을 고르세요.
-이것은 실행 샌드박스가 아니며, 로드맵에 있는 MCP allowlist 게이트웨이도
-아닙니다.
+이것은 실행 샌드박스가 아닙니다. MCP 게이트웨이도 툴 이름만 인가할 뿐
+인자는 검사하지 않습니다.
 `harness.config_files`에 나열된 설정 파일은 명시적으로 선택될 때만
 읽습니다. 설치된 Cursor 훅 파일은 드리프트 감지를 위해 자동으로
 핑거프린트됩니다. 자격증명 파일을 포함하지 마세요. 알려진 자격증명
 유사 경로와 심볼릭 링크 대상은 거부됩니다. 경로 필터링은 범용 시크릿
 탐지기가 아닙니다.
 
-v1에는 클라우드 서비스, 모델 호스팅, 모델 학습, 전체 에이전트 평가,
-프록시 게이트웨이, PR 발행기, 자동 롤백이 없습니다.
+클라우드 서비스, 모델 호스팅, 모델 학습, 전체 에이전트 평가, 자동 롤백은
+없습니다. MCP 게이트웨이는 로컬 stdio 프록시에 머물고, `ledger-publish`는
+명시적 `--pr` 플래그가 있을 때만 GitHub에 씁니다.
 
 ## 구조와 기여
 
 ```text
 packages/core              정책, CLI, 훅 슬롯, 플러그인 로더, 영수증
 packages/plugin-verify     검증 규칙과 command 검사
-packages/plugin-harness    설정 린트; eval 명령 스텁
-packages/plugin-mcp-gateway  v1.2 인터페이스 스텁
-packages/plugin-ledger       v1.3 인터페이스 스텁
+packages/plugin-harness    설정 린트; 바운디드 eval 명령
+packages/plugin-mcp-gateway  TOML 툴 allowlist를 적용하는 stdio MCP 프록시
+packages/plugin-ledger       실행 기록 집계와 롤백 힌트
 fixtures/                  매니페스트 채점 케이스 (라이브 전용 스킵 1개 선언)
 examples/sample/           실행 가능한 오류 텍스트/타입/순서 계약 예제
+examples/eval-repair/      스크립트된 멀티턴 eval 시나리오
 ```
 
 [Plugin API](docs/PLUGIN_API.md), [로드맵](ROADMAP.md),
