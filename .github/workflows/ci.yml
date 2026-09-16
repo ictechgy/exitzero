@@ -10,15 +10,15 @@ jobs:
       matrix:
         python-version: ['3.11', '3.14']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Run the same offline gate as local development
         run: python scripts/ci.py
       - name: Preserve receipts and fixture evidence on every outcome
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gate-evidence-${{ matrix.python-version }}
           path: |
@@ -29,8 +29,8 @@ jobs:
     needs: gate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       - name: Prepare the pinned build backend
@@ -41,7 +41,7 @@ jobs:
         run: python scripts/release_check.py --wheel dist/exitzero-*.whl
       - name: Preserve distribution and installed-package evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: package-evidence
           path: |
