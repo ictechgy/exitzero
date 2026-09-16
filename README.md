@@ -1,39 +1,71 @@
 # exitzero
 
-**AI가 “끝났다”고 말해도, 검사를 통과하기 전에는 끝난 것이 아닙니다.**
+**An agent saying “done” is not evidence.** Run the policy, check the exit
+code, and keep the receipt.
 
-exitzero는 저장소의 정책을 실행하는 작은 개발 도구입니다. 같은 TOML 정책으로
-로컬 CLI, Git 훅, CI를 검사하고 매번 JSON 실행 영수증을 남깁니다. 사용자는 하나의
-명령을 쓰고, 내부는 작은 코어와 플러그인으로 나뉩니다.
+English | [한국어](README.ko.md)
 
-**An agent saying “done” is not evidence.** Run the policy, check the exit code,
-and keep the receipt. This MVP checks Python code and agent configuration.
-Explicit command checks can run your existing tools for any language.
+exitzero is a small developer tool that runs a repository's policy. The same
+TOML policy drives the local CLI, Git hooks, and CI, and every run leaves a
+JSON receipt. You use one command; inside, a small core and plugins do the
+work. This MVP checks Python code and agent configuration. Explicit command
+checks can run your existing tools for any language.
 
-## Try it without downloading dependencies
+## Install
 
-Python 3.11 or newer is required. Runtime and tests use only the standard library.
+Python 3.11 or newer is required. Runtime and tests use only the standard
+library.
 
 ```sh
-export PATH="$PWD/bin:$PATH"
-mkdir /tmp/exitzero-demo
-cd /tmp/exitzero-demo
+pip install exitzero
+```
+
+Then, inside any repository:
+
+```sh
 exitzero init
 exitzero check
 exitzero lint-config
 exitzero report --format json
 ```
 
-`init` creates a starter TOML policy, a managed section in `AGENTS.md`, and ignore
-entries for local receipts and Python caches. In an empty repository it also
-creates a tiny Python sample. It preserves existing policy files. The starter
-policy checks syntax only: add project-specific checks before using it as a merge
-gate. A syntax pass is not a claim that your application works.
+Without installing, prefix every command with `uvx` (or `pipx run`):
 
-For a Python repository, `init` can write the common static checks and your
-existing test/review commands in one step. Each command is parsed into argv and
-later runs with `shell=False`; `{python}` means the Python interpreter running
-`exitzero`.
+```sh
+uvx exitzero init
+uvx exitzero check
+```
+
+`init` creates a starter TOML policy, a managed section in `AGENTS.md`, and
+ignore entries for local receipts and Python caches. In an empty repository
+it also creates a tiny Python sample. It preserves existing policy files.
+The starter policy checks syntax only: add project-specific checks before
+using it as a merge gate. A syntax pass is not a claim that your application
+works.
+
+To run it from a source checkout instead — no package installation or build
+tools needed:
+
+```sh
+git clone https://github.com/ictechgy/exitzero.git
+cd exitzero
+export PATH="$PWD/bin:$PATH"
+```
+
+For a conventional source install, use a virtual environment and `python -m
+pip install .`. Building uses setuptools. If setuptools and wheel are already
+available, an offline editable install is `python -m pip install --no-index
+--no-build-isolation --no-deps -e .`. The checkout launcher above needs no
+build tools.
+
+## Generate checks for a Python repository
+
+`init` can write the common static checks and your existing test/review
+commands in one step. Run this *instead of* the bare `init` above: `init`
+never overwrites an existing policy and exits 2 if one is present — in that
+case edit the policy directly, then run `exitzero init --sync`. Each command
+is parsed into argv and later runs with `shell=False`; `{python}` means the
+Python interpreter running `exitzero`.
 
 ```sh
 exitzero init --profile python \
@@ -43,29 +75,23 @@ exitzero init --profile python \
   --review-command '{python} scripts/review_contract.py'
 ```
 
-`--source-root`, `--allow-module`, and `--review-command` can be repeated. Quote
-literal arguments that contain punctuation; shell pipelines, redirects, and
-other control operators are rejected. `init` only records commands, so it does
-not execute them. Keep credentials out of command arguments because the policy
-stores the resulting argv. Existing policies are never overwritten, and
-generation options cannot be combined with `init --sync`. Without
+`--source-root`, `--allow-module`, and `--review-command` can be repeated.
+Quote literal arguments that contain punctuation; shell pipelines, redirects,
+and other control operators are rejected. `init` only records commands, so it
+does not execute them. Keep credentials out of command arguments because the
+policy stores the resulting argv. Existing policies are never overwritten,
+and generation options cannot be combined with `init --sync`. Without
 `--profile python`, `init` remains the syntax-only compatibility starter.
-Generated command checks fingerprint Python files for the receipt. If a test or
-review command depends on JSON, YAML, Markdown, or another non-Python input,
-edit that check's `paths` in the policy to include those files.
+Generated command checks fingerprint Python files for the receipt. If a test
+or review command depends on JSON, YAML, Markdown, or another non-Python
+input, edit that check's `paths` in the policy to include those files.
 
-Run the included example, which exercises all four check types:
+From a checkout, the included example exercises all four check types:
 
 ```sh
 ./bin/exitzero --root examples/sample check
 ./bin/exitzero --root examples/sample lint-config
 ```
-
-For a conventional installation, use a virtual environment and `python -m pip
-install .`. Building uses setuptools; runtime has no third-party dependencies.
-If setuptools and wheel are already available, an offline editable install is
-`python -m pip install --no-index --no-build-isolation --no-deps -e .`.
-The checkout launcher above needs no build tools.
 
 ## Put review requirements in the policy
 
@@ -104,12 +130,12 @@ config_files = []
 rules = [{id = "error-text", value = "Tests assert the exact public error text."}]
 ```
 
-After editing the policy, run `exitzero init --sync`. Only the generated section
-of `AGENTS.md` changes. Its fingerprint covers the complete parsed policy, so
-changing check options also creates detectable drift. Text outside the section
-stays yours. Harness rules are documentation and conflict detection, not semantic
-enforcement: express exact messages, types and result ordering in executable
-tests. See [the sample](examples/sample).
+After editing the policy, run `exitzero init --sync`. Only the generated
+section of `AGENTS.md` changes. Its fingerprint covers the complete parsed
+policy, so changing check options also creates detectable drift. Text outside
+the section stays yours. Harness rules are documentation and conflict
+detection, not semantic enforcement: express exact messages, types and result
+ordering in executable tests. See [the sample](examples/sample).
 
 | Check | What v1 detects |
 | --- | --- |
@@ -119,12 +145,12 @@ tests. See [the sample](examples/sample).
 | `command` | A configured test/lint command fails or exceeds its timeout |
 | Harness lint | Generated AGENTS drift, installed-hook drift, explicit JSON config shape errors, repeated/conflicting rule IDs |
 
-Import analysis does not execute imported code. It is intentionally conservative
-and does not prove arbitrary dynamic exports, package loading or third-party API
-signatures. `allow_modules` explicitly trusts listed external module names.
-Test-quality analysis detects obvious problems; run real tests as well. Natural
-language contradictions in arbitrary AGENTS prose or Cursor rule files are not
-understood by v1.
+Import analysis does not execute imported code. It is intentionally
+conservative and does not prove arbitrary dynamic exports, package loading or
+third-party API signatures. `allow_modules` explicitly trusts listed external
+module names. Test-quality analysis detects obvious problems; run real tests
+as well. Natural language contradictions in arbitrary AGENTS prose or Cursor
+rule files are not understood by v1.
 
 ## Commands and outcomes
 
@@ -144,64 +170,78 @@ Global `--root` and `--policy` options go before the subcommand. `check` runs
 configuration linters and verification checks. `lint-config` never executes
 verification commands.
 
+Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
+through exit codes:
+
 | Exit code | Meaning |
 | --- | --- |
 | 0 | All configured checks passed |
-| 1 | A check found a violation |
-| 2 | Invalid policy, missing plugin, execution error, or receipt could not be written |
+| 1 | A check found a violation, including a command that fails, times out, or cannot start |
+| 2 | Invalid policy, missing plugin, internal execution error, or a receipt that could not be written |
 
-Every `check`, `lint-config`, and hook gate writes a unique JSON receipt under
-`.exitzero/runs/`, including failures and malformed policies. If storage fails,
-the command exits 2 and reports `receipt: null`; it cannot claim success.
-`--format json` prints the same machine-readable result. `report` reads the
-latest receipt; it does not run a fresh check. See [receipt schema](docs/receipt.schema.json).
+`init` and `report` are not gates. `init` exits 2 on invalid options or an
+existing policy; `report` prints the latest stored receipt and exits 2 only
+when that receipt itself recorded an execution error.
 
-Receipts include check IDs, findings, exit code, policy hash, hashes of selected
-inputs, plugin names and timing. They do not contain source code, environment
-variables, hook input, command arguments or command output. Command output is
-discarded; rerun a failing command directly to debug it. Receipts identify the
-declared input selection, not every dependency of arbitrary commands. They are
-local evidence, not signed or tamper-proof attestations.
+Every `check`, `lint-config`, and hook gate writes a unique JSON receipt
+under `.exitzero/runs/`, including failures and malformed policies. If
+storage fails, the command exits 2 and reports `receipt: null`; it cannot
+claim success. `--format json` prints the same machine-readable result.
+`report` reads the latest receipt; it does not run a fresh check. See
+[receipt schema](docs/receipt.schema.json).
+
+Receipts include check IDs, findings, exit code, policy hash, hashes of
+selected inputs, plugin names and timing. They do not contain source code,
+environment variables, hook input, command arguments or command output.
+Command output is discarded; rerun a failing command directly to debug it.
+Receipts identify the declared input selection, not every dependency of
+arbitrary commands. They are local evidence, not signed or tamper-proof
+attestations.
 
 ## Local hooks and CI
 
-See [hook setup](docs/HOOKS.md). Cursor uses a `stop` hook by default: failures
-request one follow-up repair turn. This is feedback, not a merge barrier. Git
-pre-commit and CI enforce exit codes. The generic hook command has the same
-0/1/2 contract as `check`; Cursor translates results to its JSON protocol.
+See [hook setup](docs/HOOKS.md). Cursor uses a `stop` hook by default:
+failures request one follow-up repair turn. This is feedback, not a merge
+barrier. Git pre-commit and CI enforce exit codes. The generic hook command
+has the same 0/1/2 contract as `check`; Cursor translates results to its JSON
+protocol.
 
-Run the repository's automated milestone runner:
+From the exitzero checkout root, run the repository's automated milestone
+runner:
 
 ```sh
 python3 scripts/ci.py
 ```
 
-It runs the repository gate, config lint, sample gate and ten pass/fail fixtures,
-and writes `.exitzero/ci-results.json` plus logs. The GitHub workflow runs this
-same script and uploads `.exitzero/` evidence even on failure. Configure the CI
-job as a required branch check in your hosting service; this repository does not
-change branch protection settings.
+It runs the repository gate, config lint, sample gate and ten pass/fail
+fixtures, and writes `.exitzero/ci-results.json` plus logs. The GitHub
+workflow runs this same script and uploads `.exitzero/` evidence even on
+failure. Configure the CI job as a required branch check in your hosting
+service; this repository does not change branch protection settings.
 
-The [riskgate pilot](docs/PILOT_RISKGATE.md) applies the same gate to a pinned
-real repository. It checks a passing baseline and four independent faults,
-including an empty test that the upstream test runner still accepts. Its runner
-preserves the original checkout and records all gate receipts.
-The [vecdiff pilot](docs/PILOT_VECDIFF.md) adds external NumPy dependencies and
-independent numeric review contracts. Both pilots use isolated source copies.
+The [riskgate pilot](docs/PILOT_RISKGATE.md) applies the same gate to a
+pinned real repository. It checks a passing baseline and four independent
+faults, including an empty test that the upstream test runner still accepts.
+Its runner preserves the original checkout and records all gate receipts.
+The [vecdiff pilot](docs/PILOT_VECDIFF.md) adds external NumPy dependencies
+and independent numeric review contracts. Both pilots use isolated source
+copies.
 
 ## Trust and scope
 
-Policies, selected plugins and command checks are trusted executable configuration.
-Review them before running an unfamiliar repository. Static checks and config
-lint make no network requests. Command checks can run arbitrary local programs;
-choose offline commands to keep the whole gate offline. This is not an execution
-sandbox or the future MCP allowlist gateway. Config files are read only when
-explicitly selected (and the installed Cursor file is fingerprinted); do not
-include credential files. Known credential-like paths and symlink targets are
-rejected. Path filtering is not a universal secret detector.
+Policies, selected plugins and command checks are trusted executable
+configuration. Review them before running an unfamiliar repository. Static
+checks and config lint make no network requests. Command checks can run
+arbitrary local programs; choose offline commands to keep the whole gate
+offline. This is not an execution sandbox or the future MCP allowlist
+gateway. Config files listed under `harness.config_files` are read only when
+explicitly selected; an installed Cursor hooks file is fingerprinted
+automatically so drift is detectable. Do not include credential files.
+Known credential-like paths and symlink targets are rejected. Path filtering
+is not a universal secret detector.
 
-There is no cloud service, model hosting, model training, full agent evaluation,
-proxy gateway, PR publisher or automatic rollback in v1.
+There is no cloud service, model hosting, model training, full agent
+evaluation, proxy gateway, PR publisher or automatic rollback in v1.
 
 ## Structure and contributing
 
@@ -216,9 +256,9 @@ examples/sample/           runnable error-text/type/order contract example
 ```
 
 Read [Plugin API](docs/PLUGIN_API.md), [roadmap](ROADMAP.md), and
-[design references](docs/REFERENCES.md). No project code was copied from prior art.
-Run focused regression tests with `python3 scripts/run_tests.py`; run the complete
-local acceptance sequence with `python3 scripts/ci.py`.
+[design references](docs/REFERENCES.md). No project code was copied from
+prior art. Run focused regression tests with `python3 scripts/run_tests.py`;
+run the complete local acceptance sequence with `python3 scripts/ci.py`.
 Verify a built package and real Git-hook behavior with the [offline release
-runner](docs/RELEASE.md). See [release notes](CHANGELOG.md) for the candidate scope.
+runner](docs/RELEASE.md). See [release notes](CHANGELOG.md).
 License: [MIT](LICENSE).
