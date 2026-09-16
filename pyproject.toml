@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aidd-gate"
+version = "0.1.0"
+description = "Offline policy and verification gates for AI-assisted coding teams"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+dependencies = []
+
+[project.scripts]
+aidd-gate = "aidd_gate.cli:main"
+
+[project.entry-points."aidd_gate.plugins"]
+verify = "aidd_gate_verify"
+harness = "aidd_gate_harness"
+
+[tool.setuptools]
+packages = ["aidd_gate", "aidd_gate_verify", "aidd_gate_harness", "aidd_gate_mcp_gateway", "aidd_gate_ledger"]
+package-dir = {aidd_gate = "packages/core/src/aidd_gate", aidd_gate_verify = "packages/plugin-verify/src/aidd_gate_verify", aidd_gate_harness = "packages/plugin-harness/src/aidd_gate_harness", aidd_gate_mcp_gateway = "packages/plugin-mcp-gateway/src/aidd_gate_mcp_gateway", aidd_gate_ledger = "packages/plugin-ledger/src/aidd_gate_ledger"}
