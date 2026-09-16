@@ -2,14 +2,15 @@
 import argparse
 import json
 from pathlib import Path
+import shlex
 import sys
 
 from . import __version__
 from .api import Context, HOOK_SLOTS
-from .files import safe_path, select_files
+from .files import safe_path, select_files, validate_relative
 from .hooks import CURSOR_EVENTS, cursor_response, install
 from .loader import discover
-from .policy import DEFAULT_POLICY, load_policy, sync_agents
+from .policy import DEFAULT_POLICY, load_policy, python_profile_policy, sync_agents
 from .runner import run
 
 
@@ -21,6 +22,16 @@ def parser() -> argparse.ArgumentParser:
     commands = cli.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init", help="Create policy and managed AGENTS section")
     init.add_argument("--sync", action="store_true", help="Regenerate only the managed AGENTS section")
+    init.add_argument("--profile", choices=("default", "python"), default="default",
+                      help="Policy starter profile (python adds static checks and command slots)")
+    init.add_argument("--source-root", action="append", default=[], metavar="PATH",
+                      help="Python source root; repeat for multiple roots")
+    init.add_argument("--allow-module", action="append", default=[], metavar="MODULE",
+                      help="External Python module trusted by the imports check")
+    init.add_argument("--test-command", metavar="COMMAND",
+                      help="Shell-free test command to store as argv")
+    init.add_argument("--review-command", action="append", default=[], metavar="COMMAND",
+                      help="Shell-free review command; repeatable")
     for name in ("check", "lint-config"):
         child = commands.add_parser(name)
         child.add_argument("--format", choices=("human", "json"), default="human")
@@ -53,6 +64,74 @@ def emit(receipt: dict, output: str) -> None:
     print(f"Receipt: {receipt['receipt'] or 'NOT WRITTEN'}")
 
 
+_COMMAND_OPERATORS = frozenset("|&;<>()")
+
+
+def _parse_init_command(value: str | None) -> list[str] | None:
+    """Parse a user command without invoking a shell or accepting operators."""
+
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip() or "\x00" in value:
+        raise ValueError("command must be a non-empty string")
+    quote: str | None = None
+    escaped = False
+    for character in value:
+        if escaped:
+            escaped = False
+            continue
+        if quote is not None:
+            if character == quote:
+                quote = None
+            elif character == "\\" and quote == '"':
+                escaped = True
+            continue
+        if character in "'\"":
+            quote = character
+        elif character == "\\":
+            escaped = True
+        elif character in _COMMAND_OPERATORS or character in "\r\n":
+            raise ValueError("commands cannot contain shell operators or control characters")
+    if quote is not None or escaped:
+        raise ValueError("command has an unterminated quote or escape")
+    try:
+        argv = shlex.split(value, posix=True)
+    except ValueError as error:
+        raise ValueError("command has invalid shell-style quoting") from error
+    if not argv or any(not isinstance(item, str) or not item for item in argv):
+        raise ValueError("command must contain at least one argument")
+    return argv
+
+
+def _init_generation(args: argparse.Namespace) -> str:
+    generation_requested = bool(
+        args.profile != "default" or args.source_root or args.allow_module
+        or args.test_command is not None or args.review_command
+    )
+    if args.sync and generation_requested:
+        raise ValueError("init --sync cannot be combined with policy generation options")
+    if args.profile == "default" and generation_requested:
+        raise ValueError("--profile python is required with generation options")
+    if args.profile != "python":
+        return DEFAULT_POLICY
+    roots = args.source_root or ["."]
+    for root in roots:
+        validate_relative(root)
+        if any(character in root for character in "*?[]"):
+            raise ValueError("source roots must be directories, not glob patterns")
+    for module in args.allow_module:
+        if not module or any(not part.isidentifier() for part in module.split(".")):
+            raise ValueError("allow modules must contain dotted module names")
+    test_argv = _parse_init_command(args.test_command)
+    review_argvs: list[list[str]] = []
+    for value in args.review_command:
+        argv = _parse_init_command(value)
+        if argv is None:
+            raise ValueError("review commands must be non-empty strings")
+        review_argvs.append(argv)
+    return python_profile_policy(roots, args.allow_module, test_argv, review_argvs)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     root = Path(args.root).resolve()
@@ -83,11 +162,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "init":
             if not root.is_dir():
                 raise ValueError("Root directory must exist")
+            generated_policy = _init_generation(args)
             if not args.sync:
                 if path.exists():
                     raise ValueError("Policy already exists; use init --sync")
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(DEFAULT_POLICY, encoding="utf-8")
+                path.write_text(generated_policy, encoding="utf-8")
                 ignore = safe_path(root, ".gitignore")
                 existing = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
                 additions = [item for item in ("/.aidd-gate/", "__pycache__/") if item not in existing.splitlines()]
