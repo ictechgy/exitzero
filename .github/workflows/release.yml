@@ -27,14 +27,17 @@ jobs:
           python -m build --sdist --no-isolation --outdir dist
       - name: Verify the installed wheel and actual Git commits offline
         run: python scripts/release_check.py --wheel dist/exitzero-*.whl
-      - name: Preserve distribution and installed-package evidence
+      - name: Stage built distributions for publishing
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dist
+          path: dist/*
+      - name: Preserve installed-package evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: release-evidence
-          path: |
-            dist/
-            .exitzero/releases/
+          path: .exitzero/releases/
           include-hidden-files: true
   publish:
     needs: build
@@ -45,6 +48,6 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-evidence
+          name: release-dist
           path: dist
       - uses: pypa/gh-action-pypi-publish@release/v1
