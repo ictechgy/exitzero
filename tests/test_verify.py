@@ -110,6 +110,123 @@ class VerifyPluginTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     check_imports(self.context(root), self.spec("python.imports", options=options))
 
+    def test_imports_skips_importerror_guarded_optional_dependencies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "main.py").write_text(
+                "try:\n"
+                "    import optional_dep\n"
+                "    from other_dep import helper\n"
+                "except ImportError:\n"
+                "    optional_dep = None\n"
+                "try:\n"
+                "    import bare_dep\n"
+                "except:\n"
+                "    pass\n"
+                "try:\n"
+                "    import tuple_dep\n"
+                "except (ImportError, OSError):\n"
+                "    pass\n"
+                "try:\n"
+                "    import required_dep\n"
+                "except OSError:\n"
+                "    pass\n"
+                "import unguarded_dep\n",
+                encoding="utf-8",
+            )
+            findings = check_imports(self.context(root), self.spec("python.imports", ("main.py",)))
+            messages = "\n".join(f.message for f in findings)
+            self.assertNotIn("optional_dep", messages)
+            self.assertNotIn("other_dep", messages)
+            self.assertNotIn("bare_dep", messages)
+            self.assertNotIn("tuple_dep", messages)
+            self.assertIn("required_dep", messages)
+            self.assertIn("unguarded_dep", messages)
+
+    def test_imports_guard_does_not_cross_function_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "main.py").write_text(
+                "try:\n"
+                "    def later():\n"
+                "        import missing_dependency\n"
+                "except ImportError:\n"
+                "    pass\n"
+                "try:\n"
+                "    class Holder:\n"
+                "        import class_scoped_dep\n"
+                "except ImportError:\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            findings = check_imports(self.context(root), self.spec("python.imports", ("main.py",)))
+            messages = "\n".join(f.message for f in findings)
+            self.assertIn("missing_dependency", messages)
+            self.assertNotIn("class_scoped_dep", messages)
+
+    def test_imports_guard_keeps_local_attribute_checks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "localmod.py").write_text("value = 1\n", encoding="utf-8")
+            (root / "main.py").write_text(
+                "try:\n"
+                "    import localmod\n"
+                "except ImportError:\n"
+                "    pass\n"
+                "localmod.nonexistent\n",
+                encoding="utf-8",
+            )
+            findings = check_imports(self.context(root), self.spec("python.imports", ("main.py",)))
+            self.assertTrue(any("localmod.nonexistent" in f.message for f in findings))
+
+    def test_imports_module_not_found_guard_keeps_symbol_findings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "lib.py").write_text("value = 1\n", encoding="utf-8")
+            (root / "main.py").write_text(
+                "try:\n"
+                "    from lib import Missing\n"
+                "except ModuleNotFoundError:\n"
+                "    pass\n"
+                "try:\n"
+                "    from lib import AlsoMissing\n"
+                "except ImportError:\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            findings = check_imports(self.context(root), self.spec("python.imports", ("main.py",)))
+            messages = "\n".join(f.message for f in findings)
+            self.assertIn("'Missing'", messages)
+            self.assertNotIn("AlsoMissing", messages)
+
+    def test_imports_try_star_and_qualified_handlers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "main.py").write_text(
+                "try:\n"
+                "    import starred_dep\n"
+                "except* ImportError:\n"
+                "    pass\n"
+                "try:\n"
+                "    import qualified_dep\n"
+                "except builtins.ImportError:\n"
+                "    pass\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                check_imports(self.context(root), self.spec("python.imports", ("main.py",))), [])
+
+    def test_imports_overlapping_roots_keep_first_name_precedence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src/pkg").mkdir(parents=True)
+            (root / "src/pkg/__init__.py").write_text("", encoding="utf-8")
+            (root / "src/pkg/api.py").write_text("from .. import helper\n", encoding="utf-8")
+            (root / "src/helper.py").write_text("value = 1\n", encoding="utf-8")
+            spec = self.spec("python.imports", ("src/pkg/api.py",), {"roots": ["src", "."]})
+            findings = check_imports(self.context(root), spec)
+            self.assertTrue(any("Relative import" in f.message for f in findings))
+
     def test_test_quality_reports_empty_and_vacuous_tests(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

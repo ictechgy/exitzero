@@ -49,7 +49,9 @@ Verification kinds in v1:
 
 - `python.syntax`: parse selected Python files.
 - `python.imports`: statically check import resolution and local module symbols;
-  options `roots` (default `["."]`), `allow_modules` (default `[]`).
+  options `roots` (default `["."]`), `allow_modules` (default `[]`). Imports
+  inside `try` bodies guarded by `except ImportError`/`ModuleNotFoundError`
+  (the optional-dependency pattern) are skipped.
 - `python.test-quality`: reject missing/empty/obviously vacuous test cases.
 - `command`: execute `options.argv` without a shell; `{python}` expands to the
   current Python interpreter. `options.timeout` defaults to 30 seconds.

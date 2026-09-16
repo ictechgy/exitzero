@@ -187,12 +187,11 @@ def _resolve_relative(node: ast.ImportFrom, current: str) -> str | None:
     return ".".join(prefix)
 
 
-def _source_module(path: Path, root: Path, index: dict[str, Path]) -> str | None:
-    resolved = path.resolve()
-    for name, candidate in index.items():
-        if candidate.resolve() == resolved:
-            return f"{name}.__init__" if path.name == "__init__.py" else name
-    return None
+def _source_module(path: Path, resolved: dict[Path, str]) -> str | None:
+    name = resolved.get(path.resolve())
+    if name is None:
+        return None
+    return f"{name}.__init__" if path.name == "__init__.py" else name
 
 
 def _attribute_chain(node: ast.Attribute | ast.Name) -> list[str] | None:
@@ -260,11 +259,79 @@ def _rebound_names(tree: ast.AST, imported: set[str]) -> set[str]:
     return rebound.intersection(imported)
 
 
+_GUARD_NONE = 0
+_GUARD_MODULE = 1  # catches ModuleNotFoundError only: missing module, not missing symbols
+_GUARD_IMPORT = 2  # catches ImportError/bare except: missing modules and symbols
+
+_IMPORT_ERROR_NAMES = {"ImportError": _GUARD_IMPORT, "ModuleNotFoundError": _GUARD_MODULE}
+
+
+def _guard_kind(handler_type: ast.AST | None) -> int:
+    """Classify one except handler: does it catch ImportError or only ModuleNotFoundError?"""
+
+    if handler_type is None:
+        return _GUARD_IMPORT
+    names = handler_type.elts if isinstance(handler_type, ast.Tuple) else [handler_type]
+    kind = _GUARD_NONE
+    for item in names:
+        if isinstance(item, ast.Name):
+            name = item.id
+        elif isinstance(item, ast.Attribute):
+            name = item.attr
+        else:
+            continue
+        kind = max(kind, _IMPORT_ERROR_NAMES.get(name, _GUARD_NONE))
+    return kind
+
+
+def _collect_guarded(statement: ast.AST, guarded: dict[int, int], kind: int) -> None:
+    """Mark imports in a try body without crossing deferred function scopes."""
+
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            guarded[id(node)] = max(guarded.get(id(node), _GUARD_NONE), kind)
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _guarded_imports(tree: ast.AST) -> dict[int, int]:
+    """Import statements inside try bodies that catch import failures.
+
+    ``try: import optional / except ImportError`` is the standard optional
+    dependency pattern, so unresolved-module findings there are suppressed.
+    ``except ModuleNotFoundError`` cannot catch a missing imported symbol, so
+    symbol findings survive under it. Function bodies inside the try are
+    deferred scopes and stay unguarded; class bodies execute immediately and
+    remain guarded.
+    """
+
+    guarded: dict[int, int] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Try, ast.TryStar)):
+            continue
+        kind = max((_guard_kind(handler.type) for handler in node.handlers), default=_GUARD_NONE)
+        if kind == _GUARD_NONE:
+            continue
+        for statement in node.body:
+            _collect_guarded(statement, guarded, kind)
+    return guarded
+
+
 def check_imports(context: Context, spec: CheckSpec) -> list[Finding]:
     """Resolve local imports and local module attributes from ASTs only."""
 
     roots, allow_modules = _validate_import_options(spec.options)
     index = _module_index(context.root, roots)
+    resolved_index: dict[Path, str] = {}
+    for name, candidate in index.items():
+        resolved_index.setdefault(candidate.resolve(), name)
+    index_prefixes: set[str] = set()
+    for name in index:
+        parts = name.split(".")
+        index_prefixes.update(".".join(parts[:end]) for end in range(1, len(parts)))
     allowed = set(allow_modules)
     findings: list[Finding] = []
     for path in _files(context, spec):
@@ -274,15 +341,17 @@ def check_imports(context: Context, spec: CheckSpec) -> list[Finding]:
             continue
         if tree is None:
             continue
-        current = _source_module(path, context.root, index)
+        current = _source_module(path, resolved_index)
         imported_modules: dict[str, str] = {}
+        guarded = _guarded_imports(tree)
         for node in ast.walk(tree):
+            guard = guarded.get(id(node), _GUARD_NONE)
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     module = alias.name
                     top = module.split(".", 1)[0]
-                    local = module in index or any(name.startswith(module + ".") for name in index)
-                    if not local and not _stdlib_module(module) and module not in allowed and top not in allowed:
+                    local = module in index or module in index_prefixes
+                    if not guard and not local and not _stdlib_module(module) and module not in allowed and top not in allowed:
                         findings.append(Finding(spec.id, f"Import {module!r} cannot be resolved", _relative(context.root, path), node.lineno))
                     if local:
                         imported_modules[alias.asname or top] = module if alias.asname else top
@@ -292,13 +361,17 @@ def check_imports(context: Context, spec: CheckSpec) -> list[Finding]:
                 else:
                     module = node.module or ""
                 if not module:
-                    findings.append(Finding(spec.id, "Relative import cannot be resolved", _relative(context.root, path), node.lineno))
+                    if not guard:
+                        findings.append(Finding(spec.id, "Relative import cannot be resolved", _relative(context.root, path), node.lineno))
                     continue
                 top = module.split(".", 1)[0]
                 local_path = index.get(module)
-                local = local_path is not None or any(name.startswith(module + ".") for name in index)
+                local = local_path is not None or module in index_prefixes
                 if not local and not _stdlib_module(module) and module not in allowed and top not in allowed:
-                    findings.append(Finding(spec.id, f"Import {module!r} cannot be resolved", _relative(context.root, path), node.lineno))
+                    if not guard:
+                        findings.append(Finding(spec.id, f"Import {module!r} cannot be resolved", _relative(context.root, path), node.lineno))
+                    continue
+                if guard >= _GUARD_IMPORT:
                     continue
                 if local_path is not None:
                     symbols = _module_symbols(local_path)
