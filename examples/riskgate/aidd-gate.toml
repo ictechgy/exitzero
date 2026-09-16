@@ -1,0 +1,48 @@
+version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+
+[[checks]]
+id = "syntax"
+kind = "python.syntax"
+paths = ["riskgate/**/*.py", "tests/**/*.py", "_aidd_gate_pilot_tests.py"]
+
+[[checks]]
+id = "imports"
+kind = "python.imports"
+paths = ["riskgate/**/*.py", "tests/**/*.py", "_aidd_gate_pilot_tests.py"]
+[checks.options]
+roots = ["."]
+allow_modules = []
+
+[[checks]]
+id = "test-quality"
+kind = "python.test-quality"
+paths = ["tests/test_*.py"]
+
+[[checks]]
+id = "regression-suite"
+kind = "command"
+paths = ["riskgate/**/*.py", "tests/**/*.py", "tests/fixtures/**/*", "riskgate.yaml", "presets/*.yaml", "_aidd_gate_pilot_tests.py"]
+[checks.options]
+argv = ["{python}", "_aidd_gate_pilot_tests.py"]
+timeout = 60
+
+[[checks]]
+id = "policy-lint"
+kind = "command"
+paths = ["riskgate/**/*.py", "riskgate.yaml"]
+[checks.options]
+argv = ["{python}", "-m", "riskgate", "lint", "riskgate.yaml"]
+timeout = 15
+
+[[checks]]
+id = "policy-cases"
+kind = "command"
+paths = ["riskgate/**/*.py", "riskgate.yaml"]
+[checks.options]
+argv = ["{python}", "-m", "riskgate", "test", "riskgate.yaml"]
+timeout = 15
+
+[harness]
+config_files = []
+rules = [{id = "pilot-contract", value = "Verify CLI exit codes, verdicts, the bundled policy, and the documented external-test skips."}]

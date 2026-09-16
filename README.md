@@ -158,6 +158,11 @@ same script and uploads `.aidd-gate/` evidence even on failure. Configure the CI
 job as a required branch check in your hosting service; this repository does not
 change branch protection settings.
 
+The [riskgate pilot](docs/PILOT_RISKGATE.md) applies the same gate to a pinned
+real repository. It checks a passing baseline and four independent faults,
+including an empty test that the upstream test runner still accepts. Its runner
+preserves the original checkout and records all gate receipts.
+
 ## Trust and scope
 
 Policies, selected plugins and command checks are trusted executable configuration.
