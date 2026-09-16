@@ -1,0 +1,10 @@
+schema_version = 1
+description = "an unparseable policy yields an operational error on both commands"
+
+[expect.check]
+exit = 2
+rules = ["core.error"]
+
+[expect.lint]
+exit = 2
+rules = ["core.error"]

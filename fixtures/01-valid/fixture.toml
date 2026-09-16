@@ -1,0 +1,10 @@
+schema_version = 1
+description = "valid baseline: all checks and lints pass"
+
+[expect.check]
+exit = 0
+rules = []
+
+[expect.lint]
+exit = 0
+rules = []

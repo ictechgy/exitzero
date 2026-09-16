@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — v1.1 in progress
+
+- Each fixture now declares versioned expectations in `fixture.toml`
+  (`schema_version = 1`); the runner reads manifests instead of a hardcoded
+  case table, and `skip = "reason"` cases are reported separately from
+  pass/fail counts.
+- Config lint now covers Claude-style hook documents (`matcher` + nested
+  `hooks`), TOML `mcp_servers` tables, empty hook slots, and `./`-relative
+  hook commands that do not resolve to a file.
+- New fixtures: joint test-quality + review-contract failure, declared
+  live-Cursor skip, and valid/invalid new-format config cases.
+
 ## 0.1.0 — released 2026-09-16
 
 - Policy-driven CLI with `init`, `check`, `lint-config`, hook installation and

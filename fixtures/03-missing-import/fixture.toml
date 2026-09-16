@@ -1,0 +1,10 @@
+schema_version = 1
+description = "an unresolvable local import must fail check while config stays clean"
+
+[expect.check]
+exit = 1
+rules = ["imports"]
+
+[expect.lint]
+exit = 0
+rules = []

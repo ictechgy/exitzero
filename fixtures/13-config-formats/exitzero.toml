@@ -1,0 +1,11 @@
+version = 1
+plugins = ["exitzero_verify", "exitzero_harness"]
+
+[[checks]]
+id = "syntax"
+kind = "python.syntax"
+paths = ["src/**/*.py"]
+
+[harness]
+config_files = [".claude/settings.json", "mcp.toml"]
+rules = []

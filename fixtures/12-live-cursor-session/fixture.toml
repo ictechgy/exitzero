@@ -1,0 +1,3 @@
+schema_version = 1
+description = "installed Cursor stop hook must gate a live session; runner cannot prove it"
+skip = "requires a live Cursor session and a human reviewer; see docs/HOOKS.md"

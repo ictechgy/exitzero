@@ -1,0 +1,7 @@
+[mcp_servers.both]
+command = "server-bin"
+url = "https://mcp.example.test/both"
+
+[mcp_servers.badargs]
+command = "server-bin"
+args = ["ok", 2]

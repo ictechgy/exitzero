@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "hooks": {
+    "stop": [
+      {
+        "command": "exitzero hooks run --adapter cursor --event stop",
+        "loop_limit": 1
+      }
+    ]
+  }
+}

@@ -1,0 +1,10 @@
+schema_version = 1
+description = "an empty test file must fail the test-quality check"
+
+[expect.check]
+exit = 1
+rules = ["test-quality"]
+
+[expect.lint]
+exit = 0
+rules = []

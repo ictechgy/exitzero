@@ -1,0 +1,10 @@
+schema_version = 1
+description = "a drifted managed AGENTS section fails both check and lint-config"
+
+[expect.check]
+exit = 1
+rules = ["harness.agents.drift"]
+
+[expect.lint]
+exit = 1
+rules = ["harness.agents.drift"]

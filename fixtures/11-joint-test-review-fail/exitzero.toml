@@ -1,0 +1,16 @@
+version = 1
+plugins = ["exitzero_verify", "exitzero_harness"]
+
+[[checks]]
+id = "test-quality"
+kind = "python.test-quality"
+paths = ["tests/**/*.py"]
+
+[[checks]]
+id = "review-contract"
+kind = "command"
+options = { argv = ["{python}", "review_contract.py"] }
+
+[harness]
+config_files = []
+rules = []

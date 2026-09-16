@@ -208,7 +208,7 @@ exitzero 체크아웃 루트에서 저장소의 자동화된 마일스톤 러너
 python3 scripts/ci.py
 ```
 
-저장소 게이트, 설정 린트, 샘플 게이트, 열 개의 성공/실패 fixture를
+저장소 게이트, 설정 린트, 샘플 게이트, 매니페스트로 채점되는 fixture를
 실행하고 `.exitzero/ci-results.json`과 로그를 남깁니다. GitHub 워크플로는
 같은 스크립트를 실행하며 실패 시에도 `.exitzero/` 증거를 업로드합니다.
 호스팅 서비스에서 CI 잡을 필수 브랜치 검사로 설정하세요 — 이 저장소는
@@ -246,7 +246,7 @@ packages/plugin-verify     검증 규칙과 command 검사
 packages/plugin-harness    설정 린트; eval 명령 스텁
 packages/plugin-mcp-gateway  v1.2 인터페이스 스텁
 packages/plugin-ledger       v1.3 인터페이스 스텁
-fixtures/                  열 개의 성공/실패 저장소 케이스
+fixtures/                  매니페스트 채점 케이스 (라이브 전용 스킵 1개 선언)
 examples/sample/           실행 가능한 오류 텍스트/타입/순서 계약 예제
 ```
 

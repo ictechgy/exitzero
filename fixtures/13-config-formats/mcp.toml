@@ -1,0 +1,7 @@
+[mcp_servers.local]
+command = "exitzero-mcp"
+args = ["--stdio"]
+env = { EXITZERO_DEBUG = "0" }
+
+[mcp_servers.docs]
+url = "https://mcp.example.test/docs"

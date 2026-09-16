@@ -2,8 +2,11 @@
 
 - These directories are test data: syntax errors, absent APIs, empty tests,
   invalid policy and document drift are intentional failure cases.
-- Keep case expectations in `scripts/run_fixtures.py` aligned with each fixture.
-  Preserve both positive controls and negative cases.
+- Each fixture declares its expectations in `fixture.toml` (schema_version 1):
+  `expect.check`/`expect.lint` carry the exit code and finding rules; a `skip`
+  string marks a case that cannot run in the offline runner and must explain
+  why. Keep manifests aligned with each fixture. Preserve both positive
+  controls and negative cases.
 - Preserve existing generated AGENTS marker blocks. Do not bulk-run policy sync
   across fixtures: `09-agents-drift` must drift and `10-invalid-policy` must fail
   policy parsing. Deeper fixture AGENTS files contain their policy examples.

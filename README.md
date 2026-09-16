@@ -213,7 +213,7 @@ runner:
 python3 scripts/ci.py
 ```
 
-It runs the repository gate, config lint, sample gate and ten pass/fail
+It runs the repository gate, config lint, sample gate and the manifest-scored
 fixtures, and writes `.exitzero/ci-results.json` plus logs. The GitHub
 workflow runs this same script and uploads `.exitzero/` evidence even on
 failure. Configure the CI job as a required branch check in your hosting
@@ -251,7 +251,7 @@ packages/plugin-verify     verification rules and command checks
 packages/plugin-harness    configuration lint; eval command stub
 packages/plugin-mcp-gateway  v1.2 interface stub
 packages/plugin-ledger       v1.3 interface stub
-fixtures/                  ten positive and negative repository cases
+fixtures/                  manifest-scored cases (one declared live-only skip)
 examples/sample/           runnable error-text/type/order contract example
 ```
 

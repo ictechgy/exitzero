@@ -1,0 +1,10 @@
+schema_version = 1
+description = "Claude settings hooks and TOML mcp_servers lint clean"
+
+[expect.check]
+exit = 0
+rules = []
+
+[expect.lint]
+exit = 0
+rules = []

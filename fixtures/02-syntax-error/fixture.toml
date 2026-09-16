@@ -1,0 +1,10 @@
+schema_version = 1
+description = "a Python syntax error must fail check while config stays clean"
+
+[expect.check]
+exit = 1
+rules = ["syntax"]
+
+[expect.lint]
+exit = 0
+rules = []
