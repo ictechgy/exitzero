@@ -11,6 +11,10 @@
   hook commands that do not resolve to a file.
 - New fixtures: joint test-quality + review-contract failure, declared
   live-Cursor skip, and valid/invalid new-format config cases.
+- `exitzero plugin harness-eval --scenario PATH` replays bounded scripted
+  multi-turn scenarios against the real gate in a temporary copy; per-turn
+  exit/rule expectations are scored, skipped scenarios report separately,
+  and reports persist under `.exitzero/evals/`.
 
 ## 0.1.0 — released 2026-09-16
 

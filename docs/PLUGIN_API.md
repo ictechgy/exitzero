@@ -58,7 +58,17 @@ Harness registration: one `harness.config` linter compares the managed AGENTS
 section to `render_agents(policy)`, checks installed hook drift, validates
 explicitly listed `harness.config_files`, and reports `harness.rules` entries
 that contradict or duplicate each other. It must never read secret-like paths
-or execute config values. `harness-eval` is a CLI stub that exits 2.
+or execute config values.
+
+`exitzero plugin harness-eval --scenario PATH` replays a bounded scripted
+evaluation: PATH holds a `scenario.toml` (`schema_version = 1`, optional
+`description`, `max_turns`, `skip`) and `turns/*/turn.toml` files declaring
+`expect` (`exit`, `rules`), an optional `delete` list and a `note`. Files
+beside `turn.toml` overlay a temporary copy — of the scenario's own `base/`
+mini-repository when present, else the invocation root — before each turn's
+real `check` run. Turn counts are bounded (default and absolute cap 64),
+mismatches fail the scenario, skipped scenarios report separately, and the
+report persists under `.exitzero/evals/`.
 
 Listed config files are linted by suffix. `.json` documents recognize Cursor
 hook entries (`command`/`prompt` fields, `version = 1` required) and Claude

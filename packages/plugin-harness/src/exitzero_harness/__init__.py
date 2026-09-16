@@ -1,16 +1,25 @@
-"""Configuration linting and the v1 harness-evaluation extension point.
+"""Configuration linting and bounded multi-turn scenario evaluation.
 
-The harness plugin deliberately only inspects files.  It does not execute hook,
-MCP, or rule values.
+The config linter deliberately only inspects files; it never executes hook,
+MCP, or rule values.  ``harness-eval`` replays scripted file turns against the
+real gate inside a temporary copy — the repository it was invoked on is never
+mutated, and trusted command checks run under their normal timeouts.
 """
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
+from pathlib import Path
 import re
 import shlex
+import shutil
+import tempfile
 import tomllib
 from typing import Any
+import uuid
+
+from exitzero.runner import run
 
 from exitzero.api import API_VERSION, Context, Finding
 from exitzero.files import safe_path
@@ -24,6 +33,18 @@ _CLAUDE_ENTRY_FIELDS = frozenset({"matcher", "hooks", "disabled"})
 _CLAUDE_ITEM_FIELDS = frozenset({"type", "command", "timeout"})
 _CURSOR_EXECUTION_FIELDS = frozenset({"command", "prompt", "type"})
 _LITERAL_COMMAND_PATH = re.compile(r"\./[A-Za-z0-9_./-]+\Z")
+
+_EVAL_SCHEMA_VERSION = 1
+_EVAL_MAX_TURNS = 64
+_EVAL_SCENARIO_FIELDS = frozenset({"schema_version", "description", "max_turns", "skip"})
+_EVAL_TURN_FIELDS = frozenset({"note", "expect", "delete"})
+_EVAL_EXPECT_FIELDS = frozenset({"exit", "rules"})
+_EVAL_IGNORED = frozenset({".git", ".exitzero", ".serena", "__pycache__", ".venv", "venv",
+                          "node_modules", "build", "dist"})
+
+
+class _EvalOperationalError(Exception):
+    """An operational eval failure that must exit 2 rather than score a mismatch."""
 
 
 def _is_claude_entry(entry: Any) -> bool:
@@ -41,17 +62,296 @@ def _is_claude_entry(entry: Any) -> bool:
 
 
 def register(registry: Any) -> None:
-    """Register the harness linter and the intentionally unimplemented eval command."""
+    """Register the harness linter and the bounded scenario evaluator."""
 
     registry.add_linter("harness.config", lint_config)
     registry.add_command("harness-eval", harness_eval)
 
 
 def harness_eval(context: Context, argv: list[str]) -> int:
-    """Keep the future multi-turn evaluation command visible but unavailable in v1."""
+    """Replay scripted scenario turns against the real gate in a temporary copy.
 
-    del context, argv
-    return 2
+    ``exitzero plugin harness-eval --scenario PATH`` is strictly opt-in: PATH is
+    a scenario directory (or a parent containing scenario directories), each
+    with a ``scenario.toml`` manifest and ``turns/*/`` directories whose files
+    overlay the repository copy before that turn's ``check`` run.  A scenario
+    may ship its own ``base/`` mini-repository; otherwise the invocation root
+    is copied minus generated directories.  Every turn expects ``exit`` and
+    ``rules``; mismatches fail the scenario while ``skip`` reports it without
+    running.  Results persist under ``.exitzero/evals/``.
+    """
+
+    try:
+        container = _eval_container(context, argv)
+    except ValueError as error:
+        print(f"harness-eval: {error}")
+        return 2
+    scenario_dirs = _discover_scenarios(container)
+    if not scenario_dirs:
+        print(f"harness-eval: no scenario directories under {container}")
+        return 2
+    started_at = datetime.now(timezone.utc)
+    results = [_run_scenario(context, container, directory) for directory in scenario_dirs]
+    for result in results:
+        line = f"{result['name']}: {result['status']}"
+        if result["status"] == "SKIP":
+            line += f" ({result['reason']})"
+        print(line)
+        for error in result.get("errors", []):
+            print(f"  {error}")
+    report = {
+        "schema_version": _EVAL_SCHEMA_VERSION,
+        "tool": "exitzero harness-eval",
+        "run_id": uuid.uuid4().hex,
+        "started_at": started_at.isoformat(),
+        "container": str(container),
+        "passed": sum(result["status"] == "PASS" for result in results),
+        "failed": sum(result["status"] == "FAIL" for result in results),
+        "skipped": sum(result["status"] == "SKIP" for result in results),
+        "errors": sum(result["status"] == "ERROR" for result in results),
+        "skipped_scenarios": [
+            {"name": result["name"], "reason": result["reason"]}
+            for result in results
+            if result["status"] == "SKIP"
+        ],
+        "scenarios": results,
+    }
+    report["status"] = "error" if report["errors"] else "failed" if report["failed"] else "passed"
+    try:
+        destination = safe_path(context.root, f".exitzero/evals/harness-eval-{report['run_id']}.json")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+                               encoding="utf-8")
+    except (OSError, ValueError):
+        print("harness-eval: cannot persist the eval report")
+        return 2
+    print(f"Report: {destination.relative_to(context.root)}")
+    if report["errors"]:
+        return 2
+    return 1 if report["failed"] else 0
+
+
+def _eval_container(context: Context, argv: list[str]) -> Path:
+    scenario: str | None = None
+    index = 0
+    while index < len(argv):
+        argument = argv[index]
+        if argument == "--scenario":
+            if index + 1 >= len(argv):
+                raise ValueError("--scenario requires a path")
+            scenario = argv[index + 1]
+            index += 2
+        elif argument.startswith("--scenario="):
+            scenario = argument.split("=", 1)[1]
+            index += 1
+        else:
+            raise ValueError(f"unknown argument: {argument}")
+    if scenario is None or not scenario.strip():
+        raise ValueError("usage: harness-eval --scenario PATH")
+    candidate = Path(scenario)
+    if not candidate.is_absolute():
+        candidate = context.root / candidate
+    container = candidate.resolve()
+    if not container.is_dir():
+        raise ValueError(f"scenario path is not a directory: {scenario}")
+    return container
+
+
+def _discover_scenarios(container: Path) -> list[Path]:
+    """List scenario candidates; a missing manifest must fail, never vanish."""
+
+    if (container / "scenario.toml").is_file():
+        return [container]
+    return sorted(
+        child for child in container.iterdir()
+        if child.is_dir() and not child.name.startswith(".")
+    )
+
+
+def _load_scenario(directory: Path) -> dict[str, Any]:
+    manifest_path = directory / "scenario.toml"
+    if not manifest_path.is_file():
+        raise ValueError(f"{directory.name} is missing scenario.toml")
+    try:
+        manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"{directory.name} scenario.toml cannot be parsed: {error}") from error
+    if not isinstance(manifest, dict) or set(manifest) - _EVAL_SCENARIO_FIELDS:
+        raise ValueError("scenario.toml has unknown fields")
+    version = manifest.get("schema_version")
+    if type(version) is not int or version != _EVAL_SCHEMA_VERSION:
+        raise ValueError(f"scenario.toml schema_version must be {_EVAL_SCHEMA_VERSION}")
+    for key in ("description", "skip"):
+        if key in manifest and not isinstance(manifest[key], str):
+            raise ValueError(f"scenario.toml {key} must be a string")
+    if "skip" in manifest and not manifest["skip"].strip():
+        raise ValueError("scenario.toml skip must explain the reason")
+    max_turns = manifest.get("max_turns")
+    if max_turns is not None and (type(max_turns) is not int or max_turns < 1):
+        raise ValueError("scenario.toml max_turns must be a positive integer")
+    return manifest
+
+
+def _load_turn(directory: Path) -> dict[str, Any]:
+    manifest_path = directory / "turn.toml"
+    if not manifest_path.is_file():
+        raise ValueError(f"{directory.name} is missing turn.toml")
+    try:
+        manifest = tomllib.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+        raise ValueError(f"{directory.name} turn.toml cannot be parsed: {error}") from error
+    if not isinstance(manifest, dict) or set(manifest) - _EVAL_TURN_FIELDS:
+        raise ValueError(f"{directory.name} turn.toml has unknown fields")
+    if "note" in manifest and not isinstance(manifest["note"], str):
+        raise ValueError(f"{directory.name} turn.toml note must be a string")
+    delete = manifest.get("delete", [])
+    if not isinstance(delete, list) or any(not isinstance(item, str) or not item for item in delete):
+        raise ValueError(f"{directory.name} turn.toml delete must be a list of paths")
+    expect = manifest.get("expect")
+    if not isinstance(expect, dict) or set(expect) - _EVAL_EXPECT_FIELDS:
+        raise ValueError(f"{directory.name} turn.toml expect must be a table of exit/rules")
+    exit_code = expect.get("exit")
+    rules = expect.get("rules")
+    if type(exit_code) is not int or exit_code not in (0, 1, 2):
+        raise ValueError(f"{directory.name} expect.exit must be 0, 1 or 2")
+    if not isinstance(rules, list) or any(not isinstance(rule, str) for rule in rules):
+        raise ValueError(f"{directory.name} expect.rules must be a list of strings")
+    return {"name": directory.name, "exit": exit_code, "rules": list(rules),
+            "delete": list(delete), "note": manifest.get("note")}
+
+
+def _copy_tree(source: Path, destination: Path, extra_ignored: frozenset[Path]) -> None:
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        return {name for name in names
+                if name in _EVAL_IGNORED or Path(directory, name) in extra_ignored}
+
+    # symlinks=True keeps links as links so the gate sees the same filesystem
+    # shape it would see in a direct check instead of dereferenced copies.
+    shutil.copytree(source, destination, dirs_exist_ok=True, ignore=ignore, symlinks=True)
+
+
+def _apply_turn(turn_directory: Path, target_root: Path) -> None:
+    root_resolved = target_root.resolve()
+    for source in sorted(turn_directory.rglob("*")):
+        relative = source.relative_to(turn_directory)
+        if relative.parts == ("turn.toml",):
+            continue
+        if source.is_symlink():
+            raise ValueError(f"turn overlay may not contain symlinks: {relative.as_posix()}")
+        destination = target_root / relative
+        # Every write must resolve inside the temp copy; a symlink planted by an
+        # earlier turn (for example by a command check) must never redirect an
+        # overlay to a file outside it.
+        if destination.is_symlink() or not destination.resolve().is_relative_to(root_resolved):
+            raise ValueError(f"turn overlay escapes the eval copy: {relative.as_posix()}")
+        if source.is_dir():
+            destination.mkdir(exist_ok=True)
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+
+
+def _apply_deletes(turn: dict[str, Any], target_root: Path) -> None:
+    root_resolved = target_root.resolve()
+    for relative in turn["delete"]:
+        try:
+            target = safe_path(target_root, relative)
+        except (OSError, ValueError, TypeError) as error:
+            raise ValueError(f"turn {turn['name']} delete path is not allowed: {relative}") from error
+        if not target.resolve().is_relative_to(root_resolved):
+            raise ValueError(f"turn {turn['name']} delete path escapes the eval copy: {relative}")
+        if not target.is_file():
+            raise ValueError(f"turn {turn['name']} delete path does not exist: {relative}")
+        target.unlink()
+
+
+def _run_scenario(context: Context, container: Path, directory: Path) -> dict[str, Any]:
+    """Score one scenario; operational failures are ERROR, never silent passes."""
+
+    try:
+        return _execute_scenario(context, container, directory)
+    except _EvalOperationalError as error:
+        return {"name": directory.name, "status": "ERROR", "errors": [str(error)]}
+    except (OSError, ValueError) as error:
+        return {"name": directory.name, "status": "ERROR",
+                "errors": [f"{type(error).__name__}: {error}"]}
+
+
+def _execute_scenario(context: Context, container: Path, directory: Path) -> dict[str, Any]:
+    result: dict[str, Any] = {"name": directory.name}
+    try:
+        manifest = _load_scenario(directory)
+    except ValueError as error:
+        return {**result, "status": "FAIL", "errors": [str(error)]}
+    if "description" in manifest:
+        result["description"] = manifest["description"]
+    if "skip" in manifest:
+        return {**result, "status": "SKIP", "reason": manifest["skip"]}
+    turns_dir = directory / "turns"
+    turn_dirs = sorted(child for child in turns_dir.iterdir() if child.is_dir()) if turns_dir.is_dir() else []
+    if not turn_dirs:
+        return {**result, "status": "FAIL", "errors": ["scenario has no turn directories"]}
+    bound = min(manifest.get("max_turns") or _EVAL_MAX_TURNS, _EVAL_MAX_TURNS)
+    if len(turn_dirs) > bound:
+        return {**result, "status": "FAIL",
+                "errors": [f"{len(turn_dirs)} turns exceed the bound of {bound}"]}
+    turns: list[dict[str, Any]] = []
+    try:
+        for turn_dir in turn_dirs:
+            turns.append(_load_turn(turn_dir))
+    except ValueError as error:
+        return {**result, "status": "FAIL", "errors": [str(error)]}
+    base = directory / "base"
+    if base.is_dir():
+        source, policy_name = base, "exitzero.toml"
+        if not (base / "exitzero.toml").is_file():
+            return {**result, "status": "FAIL", "errors": ["base/ requires its own exitzero.toml"]}
+        ignored = frozenset()
+    else:
+        source = context.root
+        policy_name = context.policy_path.relative_to(context.root).as_posix()
+        ignored = frozenset({container} if container.is_relative_to(context.root) else set())
+    turn_results: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix=f"exitzero-eval-{directory.name}-") as temporary:
+        temporary_root = Path(temporary)
+        try:
+            _copy_tree(source, temporary_root, ignored)
+            for turn in turns:
+                _apply_deletes(turn, temporary_root)
+                _apply_turn(Path(turns_dir) / turn["name"], temporary_root)
+                receipt = run(temporary_root, policy_name, "check")
+                if receipt.get("receipt") is None:
+                    raise _EvalOperationalError(
+                        f"turn {turn['name']} could not persist its gate receipt")
+                rules = sorted(
+                    finding.get("rule") for finding in receipt.get("findings", [])
+                    if isinstance(finding, dict)
+                )
+                expected = sorted(turn["rules"])
+                matched = receipt["exit_code"] == turn["exit"] and rules == expected
+                entry: dict[str, Any] = {
+                    "name": turn["name"],
+                    "matched": matched,
+                    "exit_code": receipt["exit_code"],
+                    "expected_exit": turn["exit"],
+                    "rules": rules,
+                    "expected_rules": expected,
+                    "receipt": receipt,
+                }
+                if "note" in turn:
+                    entry["note"] = turn["note"]
+                turn_results.append(entry)
+        except (OSError, ValueError) as error:
+            return {**result, "status": "FAIL",
+                    "errors": [f"{type(error).__name__}: {error}"], "turns": turn_results}
+    result["turns"] = turn_results
+    mismatches = [turn["name"] for turn in turn_results if not turn["matched"]]
+    if mismatches:
+        result["status"] = "FAIL"
+        result["errors"] = [f"turn {name} did not match its expectation" for name in mismatches]
+    else:
+        result["status"] = "PASS"
+    return result
 
 
 def lint_config(context: Context) -> list[Finding]:

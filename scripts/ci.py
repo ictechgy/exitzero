@@ -21,6 +21,7 @@ def main() -> int:
         ("sample-check", [*CLI, "--root", str(ROOT / "examples/sample"), "check", "--format", "json"]),
         ("sample-lint", [*CLI, "--root", str(ROOT / "examples/sample"), "lint-config", "--format", "json"]),
         ("fixtures", [sys.executable, str(ROOT / "scripts/run_fixtures.py")]),
+        ("eval-example", [*CLI, "plugin", "harness-eval", "--scenario", "examples/eval-repair"]),
     ]
     results = []
     for name, command in jobs:

@@ -140,7 +140,7 @@ Harness 규칙은 문서화와 충돌 감지이지 의미적 강제가 아닙니
 | `python.imports` | 해결되지 않는 모듈과 정적으로 선언된 로컬 모듈 심볼 누락 |
 | `python.test-quality` | 테스트 케이스 없음, 빈 테스트, 상수만 있는 자명한 단언 |
 | `command` | 설정된 테스트/린트 명령의 실패 또는 타임아웃 초과 |
-| Harness lint | 생성된 AGENTS 드리프트, 설치된 훅 드리프트, 명시적 JSON 설정 형태 오류, 중복/충돌 규칙 ID |
+| Harness lint | 생성된 AGENTS 드리프트, 설치된 훅 드리프트, JSON/TOML 설정 형태 오류(Cursor·Claude 훅 문서, MCP 서버 테이블), 중복/충돌 규칙 ID |
 
 import 분석은 임포트된 코드를 실행하지 않습니다. 의도적으로 보수적이며 임의의
 동적 export, 패키지 로딩, 서드파티 API 시그니처를 증명하지 않습니다.
@@ -160,12 +160,15 @@ exitzero hooks install --adapter cursor
 exitzero hooks install --adapter pre-commit
 exitzero hooks run --slot CI --format json
 exitzero report --format json
-exitzero plugin harness-eval   # v1에서는 명시적으로 사용 불가: exit 2.
+exitzero plugin harness-eval --scenario examples/eval-repair   # 선택적 바운디드 eval
 ```
 
 전역 `--root`와 `--policy` 옵션은 서브커맨드 앞에 옵니다. `check`는 설정
 린터와 검증 검사를 실행합니다. `lint-config`는 검증 명령을 절대 실행하지
-않습니다.
+않습니다. `plugin harness-eval`은 스크립트된 멀티턴 시나리오를 임시
+사본에서 게이트에 리플레이합니다. 턴별 기대값을 채점하고, 스킵된
+시나리오는 따로 보고하며, 리포트는 `.exitzero/evals/`에 남습니다.
+[eval 예제](examples/eval-repair)를 참고하세요.
 
 게이트 명령 — `check`, `lint-config`, `hooks run` — 은 종료 코드로 결과를
 보고합니다:

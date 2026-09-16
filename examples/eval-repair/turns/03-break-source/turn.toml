@@ -1,0 +1,5 @@
+note = "the agent introduces a syntax error in the source"
+
+[expect]
+exit = 1
+rules = ["syntax"]

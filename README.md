@@ -143,7 +143,7 @@ ordering in executable tests. See [the sample](examples/sample).
 | `python.imports` | Unresolved modules and missing statically declared local module symbols |
 | `python.test-quality` | No test cases, empty tests, obvious constant-only assertions |
 | `command` | A configured test/lint command fails or exceeds its timeout |
-| Harness lint | Generated AGENTS drift, installed-hook drift, explicit JSON config shape errors, repeated/conflicting rule IDs |
+| Harness lint | Generated AGENTS drift, installed-hook drift, JSON/TOML config shape errors (Cursor and Claude hook documents, MCP server tables), repeated/conflicting rule IDs |
 
 Import analysis does not execute imported code. It is intentionally
 conservative and does not prove arbitrary dynamic exports, package loading or
@@ -163,12 +163,15 @@ exitzero hooks install --adapter cursor
 exitzero hooks install --adapter pre-commit
 exitzero hooks run --slot CI --format json
 exitzero report --format json
-exitzero plugin harness-eval   # Explicitly unavailable in v1: exit 2.
+exitzero plugin harness-eval --scenario examples/eval-repair   # opt-in bounded eval
 ```
 
 Global `--root` and `--policy` options go before the subcommand. `check` runs
 configuration linters and verification checks. `lint-config` never executes
-verification commands.
+verification commands. `plugin harness-eval` replays a scripted multi-turn
+scenario against the gate inside a temporary copy; each turn's expectations
+are scored, skipped scenarios are reported separately, and the report lands
+under `.exitzero/evals/`. See [the eval example](examples/eval-repair).
 
 Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
 through exit codes:

@@ -1,0 +1,5 @@
+note = "the agent replaces the real test with a vacuous one"
+
+[expect]
+exit = 1
+rules = ["test-quality"]

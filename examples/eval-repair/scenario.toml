@@ -1,0 +1,3 @@
+schema_version = 1
+description = "an agent degrades a test, repairs it, then breaks the source"
+max_turns = 8

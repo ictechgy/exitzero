@@ -1,0 +1,5 @@
+note = "the agent restores a real assertion"
+
+[expect]
+exit = 0
+rules = []

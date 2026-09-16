@@ -7,11 +7,12 @@
 - **v1.1 — deepen harness:** versioned fixture scoring for joint test and review
   constraints, additional rules/config formats, opt-in bounded multi-turn eval.
   Report failures and skipped scenarios separately from pass rates.
-  Shipped so far: `fixture.toml` manifests (schema_version 1) score joint
+  Shipped: `fixture.toml` manifests (schema_version 1) score joint
   check/lint expectations per fixture, skipped cases are reported separately
-  from pass rates, and config lint covers Claude hook documents, TOML
-  `mcp_servers`, empty hook slots and repo-relative hook command paths.
-  Remaining: bounded multi-turn eval behind `harness-eval`.
+  from pass rates, config lint covers Claude hook documents, TOML
+  `mcp_servers`, empty hook slots and repo-relative hook command paths, and
+  `harness-eval` replays bounded scripted multi-turn scenarios (see
+  `examples/eval-repair`).
 - **v1.2 — local MCP/tool gateway:** a thin local proxy, YAML tool allowlist,
   explicit authorization decisions and audit events via core hook interfaces.
   No cloud control plane or Kubernetes requirement.
