@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — release candidate
+## 0.1.0 — released 2026-09-16
 
 - Policy-driven CLI with `init`, `check`, `lint-config`, hook installation and
   receipt reporting; a small core discovers trusted local plugins.
@@ -17,5 +17,6 @@
 - Offline wheel verification and actual Git commit acceptance/rejection tests.
 - MIT license; gateway and richer PR-ledger features remain roadmap stubs.
 
-The candidate is locally verified. A published release requires its own hosted
-CI result and distribution approval; local evidence is not a hosted CI record.
+Published to PyPI via trusted publishing (GitHub Actions OIDC) from tag
+`v0.1.0`, after hosted CI and offline wheel/Git-hook verification in the
+release workflow.
