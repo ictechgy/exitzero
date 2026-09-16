@@ -1,0 +1,11 @@
+version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+
+[[checks]]
+id = "test-quality"
+kind = "python.test-quality"
+paths = ["tests/**/*.py"]
+
+[harness]
+config_files = []
+rules = []

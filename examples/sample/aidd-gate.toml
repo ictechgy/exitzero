@@ -1,0 +1,32 @@
+version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+
+[[checks]]
+id = "syntax"
+kind = "python.syntax"
+paths = ["src/**/*.py", "tests/**/*.py"]
+
+[[checks]]
+id = "imports"
+kind = "python.imports"
+paths = ["src/**/*.py", "tests/**/*.py"]
+[checks.options]
+roots = ["src", "."]
+allow_modules = []
+
+[[checks]]
+id = "test-quality"
+kind = "python.test-quality"
+paths = ["tests/test_*.py"]
+
+[[checks]]
+id = "review-contracts"
+kind = "command"
+paths = ["src/**/*.py", "tests/**/*.py"]
+[checks.options]
+argv = ["{python}", "-m", "unittest", "discover", "-s", "tests", "-v"]
+timeout = 10
+
+[harness]
+config_files = []
+rules = [{id = "review-contract", value = "Assert exact error text, exception type, return type, ordering and deduplication."}]

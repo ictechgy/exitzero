@@ -1,0 +1,32 @@
+version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+
+[[checks]]
+id = "syntax"
+kind = "python.syntax"
+paths = ["packages/**/*.py", "scripts/*.py", "tests/test_*.py"]
+
+[[checks]]
+id = "imports"
+kind = "python.imports"
+paths = ["packages/**/*.py"]
+[checks.options]
+roots = ["packages/core/src", "packages/plugin-verify/src", "packages/plugin-harness/src", "packages/plugin-mcp-gateway/src", "packages/plugin-ledger/src"]
+allow_modules = []
+
+[[checks]]
+id = "test-quality"
+kind = "python.test-quality"
+paths = ["tests/test_*.py"]
+
+[[checks]]
+id = "regression-suite"
+kind = "command"
+paths = ["packages/**/*.py", "scripts/run_tests.py", "tests/test_*.py"]
+[checks.options]
+argv = ["{python}", "scripts/run_tests.py"]
+timeout = 60
+
+[harness]
+config_files = []
+rules = [{id = "completion-evidence", value = "Require runner exit codes and persisted receipts before claiming completion."}]

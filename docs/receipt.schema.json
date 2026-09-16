@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "aidd-gate run receipt v1",
+  "type": "object",
+  "required": ["schema_version", "tool_version", "run_id", "started_at", "command", "hook_slot", "policy_sha256", "plugins", "inputs", "checks", "findings", "exit_code", "status", "duration_ms", "receipt"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "tool_version": {"type": "string"},
+    "run_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+    "started_at": {"type": "string", "format": "date-time"},
+    "command": {"enum": ["check", "lint-config"]},
+    "hook_slot": {"enum": [null, "PreToolUse", "PostToolUse", "pre-commit", "CI"]},
+    "policy_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
+    "plugins": {"type": "array", "items": {"type": "string"}},
+    "inputs": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
+    "checks": {"type": "array", "items": {"type": "object", "required": ["id", "kind", "status", "finding_count"], "properties": {
+      "id": {"type": "string"}, "kind": {"type": "string"}, "status": {"enum": ["passed", "failed"]}, "finding_count": {"type": "integer", "minimum": 0}
+    }, "additionalProperties": false}},
+    "findings": {"type": "array", "items": {"type": "object", "required": ["rule", "message", "path", "line", "severity"], "properties": {
+      "rule": {"type": "string"}, "message": {"type": "string"}, "path": {"type": ["string", "null"]}, "line": {"type": ["integer", "null"], "minimum": 1}, "severity": {"enum": ["error", "warning"]}
+    }, "additionalProperties": false}},
+    "exit_code": {"enum": [0, 1, 2]},
+    "status": {"enum": ["passed", "failed", "error"]},
+    "duration_ms": {"type": "number", "minimum": 0},
+    "receipt": {"type": ["string", "null"]}
+  },
+  "additionalProperties": false
+}

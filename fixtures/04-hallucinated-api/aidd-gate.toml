@@ -1,0 +1,12 @@
+version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+
+[[checks]]
+id = "imports"
+kind = "python.imports"
+paths = ["src/**/*.py"]
+options = { roots = ["src"], allow_modules = [] }
+
+[harness]
+config_files = []
+rules = []

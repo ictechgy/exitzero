@@ -1,0 +1,11 @@
+version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+
+[[checks]]
+id = "review-contract"
+kind = "command"
+options = { argv = ["{python}", "review_contract.py"] }
+
+[harness]
+config_files = []
+rules = []

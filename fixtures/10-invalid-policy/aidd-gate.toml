@@ -1,0 +1,11 @@
+version = 1
+plugins = []
+
+[[checks]]
+id = "syntax"
+kind = "python.syntax"
+paths = ["src/**/*.py"]
+
+[harness]
+config_files = []
+rules = []

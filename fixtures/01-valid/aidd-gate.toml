@@ -1,0 +1,22 @@
+version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+
+[[checks]]
+id = "syntax"
+kind = "python.syntax"
+paths = ["src/**/*.py", "tests/**/*.py"]
+
+[[checks]]
+id = "imports"
+kind = "python.imports"
+paths = ["src/**/*.py", "tests/**/*.py"]
+options = { roots = ["src"], allow_modules = [] }
+
+[[checks]]
+id = "test-quality"
+kind = "python.test-quality"
+paths = ["tests/**/*.py"]
+
+[harness]
+config_files = []
+rules = []
