@@ -71,6 +71,37 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("SECRET_EXAMPLE", receipt)
         self.assertNotIn("not-a-real-secret", receipt)
 
+    def test_sarif_format_maps_findings_to_results(self):
+        self.init()
+        (self.root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+        result = self.cli("check", "--format", "sarif")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        sarif = json.loads(result.stdout)
+        self.assertEqual(sarif["version"], "2.1.0")
+        run = sarif["runs"][0]
+        self.assertEqual(run["tool"]["driver"]["name"], "exitzero")
+        self.assertEqual(len(run["results"]), 1)
+        finding = run["results"][0]
+        self.assertEqual(finding["ruleId"], "syntax")
+        self.assertEqual(finding["level"], "error")
+        location = finding["locations"][0]["physicalLocation"]
+        self.assertEqual(location["artifactLocation"]["uri"], "broken.py")
+        self.assertEqual(location["region"]["startLine"], 1)
+        self.assertEqual([rule["id"] for rule in run["tool"]["driver"]["rules"]], ["syntax"])
+
+    def test_sarif_encodes_uris_and_report_reads_latest(self):
+        self.init()
+        (self.root / "a#b.py").write_text("def broken(:\n", encoding="utf-8")
+        result = self.cli("check", "--format", "sarif")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        result_payload = json.loads(result.stdout)["runs"][0]["results"][0]
+        uri = result_payload["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+        self.assertEqual(uri, "a%23b.py")
+        report = self.cli("report", "--format", "sarif")
+        self.assertEqual(report.returncode, 0, report.stdout + report.stderr)
+        reported = json.loads(report.stdout)["runs"][0]["results"][0]
+        self.assertEqual(reported["ruleId"], "syntax")
+
     def test_empty_checks_and_unknown_rules_are_errors(self):
         for policy in ('version = 1\nplugins = ["exitzero_verify"]\nchecks = []\n',
                        'version = 1\nplugins = ["exitzero_verify"]\n[[checks]]\nid="x"\nkind="unknown"\n'):

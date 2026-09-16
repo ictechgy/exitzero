@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shlex
 import sys
+from urllib.parse import quote
 
 from . import __version__
 from .api import Context, HOOK_SLOTS
@@ -34,7 +35,7 @@ def parser() -> argparse.ArgumentParser:
                       help="Shell-free review command; repeatable")
     for name in ("check", "lint-config"):
         child = commands.add_parser(name)
-        child.add_argument("--format", choices=("human", "json"), default="human")
+        child.add_argument("--format", choices=("human", "json", "sarif"), default="human")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
     installer = hooks.add_parser("install")
     installer.add_argument("--adapter", choices=("cursor", "pre-commit"), default="cursor")
@@ -44,14 +45,55 @@ def parser() -> argparse.ArgumentParser:
     hook_run.add_argument("--event", choices=sorted(CURSOR_EVENTS), default="stop")
     hook_run.add_argument("--format", choices=("human", "json"), default="human")
     report = commands.add_parser("report")
-    report.add_argument("--format", choices=("human", "json"), default="human")
+    report.add_argument("--format", choices=("human", "json", "sarif"), default="human")
     plugin = commands.add_parser("plugin")
     plugin.add_argument("name")
     plugin.add_argument("args", nargs=argparse.REMAINDER)
     return cli
 
 
+def _sarif(receipt: dict) -> dict:
+    """Render receipt findings as a SARIF 2.1.0 run for code-scanning tools."""
+
+    rules: list[dict] = []
+    rule_index: dict[str, int] = {}
+    results: list[dict] = []
+    for finding in receipt["findings"]:
+        rule_id = finding["rule"]
+        if rule_id not in rule_index:
+            rule_index[rule_id] = len(rules)
+            rules.append({"id": rule_id, "name": rule_id})
+        result: dict = {
+            "ruleId": rule_id,
+            "ruleIndex": rule_index[rule_id],
+            "level": "error" if finding.get("severity") == "error" else "warning",
+            "message": {"text": finding["message"]},
+        }
+        if finding.get("path"):
+            location: dict = {"artifactLocation": {"uri": quote(finding["path"]), "uriBaseId": "SRCROOT"}}
+            if finding.get("line"):
+                location["region"] = {"startLine": finding["line"]}
+            result["locations"] = [{"physicalLocation": location}]
+        results.append(result)
+    return {
+        "version": "2.1.0",
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "runs": [{
+            "tool": {"driver": {
+                "name": "exitzero",
+                "version": __version__,
+                "informationUri": "https://github.com/ictechgy/exitzero",
+                "rules": rules,
+            }},
+            "results": results,
+        }],
+    }
+
+
 def emit(receipt: dict, output: str) -> None:
+    if output == "sarif":
+        print(json.dumps(_sarif(receipt), ensure_ascii=False, sort_keys=True))
+        return
     if output == "json":
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
         return

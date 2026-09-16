@@ -194,7 +194,8 @@ exitzero plugin ledger-publish                                 # 실행 기록 �
 모든 `check`, `lint-config`, 훅 게이트는 실패와 잘못된 정책을 포함해
 `.exitzero/runs/` 아래 고유한 JSON 영수증을 남깁니다. 저장에 실패하면 명령은
 2로 종료하고 `receipt: null`을 보고합니다 — 성공을 주장할 수 없습니다.
-`--format json`은 같은 기계 판독 결과를 출력합니다. `report`는 최신
+`--format json`은 같은 기계 판독 결과를 출력하고, `--format sarif`는
+코드 스캐닝 연동용 SARIF 2.1.0 실행 결과를 출력합니다. `report`는 최신
 영수증을 읽을 뿐 새 검사를 실행하지 않습니다.
 [영수증 스키마](docs/receipt.schema.json)를 참고하세요.
 
@@ -266,7 +267,9 @@ examples/eval-repair/      스크립트된 멀티턴 eval 시나리오
 [Plugin API](docs/PLUGIN_API.md), [로드맵](ROADMAP.md),
 [설계 참고문헌](docs/REFERENCES.md)을 읽어주세요. 이전 기술에서 복사한
 프로젝트 코드는 없습니다. 집중 회귀 테스트는 `python3 scripts/run_tests.py`,
-전체 로컬 수용 시퀀스는 `python3 scripts/ci.py`로 실행합니다. 빌드된 패키지와 실제 Git 훅 동작은 [오프라인 릴리스
+전체 로컬 수용 시퀀스는 `python3 scripts/ci.py`로 실행하고, 게이트
+지연시간은 `python3 scripts/bench.py`(기본 합성 트리, `--root PATH`로
+실제 리포지토리)로 측정합니다. 빌드된 패키지와 실제 Git 훅 동작은 [오프라인 릴리스
 러너](docs/RELEASE.md)로 검증합니다. [릴리스 노트](CHANGELOG.md)를
 참고하세요.
 라이선스: [MIT](LICENSE).

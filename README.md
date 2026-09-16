@@ -198,9 +198,10 @@ when that receipt itself recorded an execution error.
 Every `check`, `lint-config`, and hook gate writes a unique JSON receipt
 under `.exitzero/runs/`, including failures and malformed policies. If
 storage fails, the command exits 2 and reports `receipt: null`; it cannot
-claim success. `--format json` prints the same machine-readable result.
-`report` reads the latest receipt; it does not run a fresh check. See
-[receipt schema](docs/receipt.schema.json).
+claim success. `--format json` prints the same machine-readable result, and
+`--format sarif` emits findings as a SARIF 2.1.0 run for code-scanning
+integrations. `report` reads the latest receipt; it does not run a fresh
+check. See [receipt schema](docs/receipt.schema.json).
 
 Receipts include check IDs, findings, exit code, policy hash, hashes of
 selected inputs, plugin names and timing. They do not contain source code,
@@ -272,7 +273,9 @@ examples/eval-repair/      scripted multi-turn eval scenario
 Read [Plugin API](docs/PLUGIN_API.md), [roadmap](ROADMAP.md), and
 [design references](docs/REFERENCES.md). No project code was copied from
 prior art. Run focused regression tests with `python3 scripts/run_tests.py`;
-run the complete local acceptance sequence with `python3 scripts/ci.py`.
-Verify a built package and real Git-hook behavior with the [offline release
+run the complete local acceptance sequence with `python3 scripts/ci.py`;
+measure gate latency with `python3 scripts/bench.py` (synthetic tree by
+default, `--root PATH` for a real repository). Verify a built package and
+real Git-hook behavior with the [offline release
 runner](docs/RELEASE.md). See [release notes](CHANGELOG.md).
 License: [MIT](LICENSE).

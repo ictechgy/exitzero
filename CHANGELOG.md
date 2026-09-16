@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+**Roadmap tail**
+
+- `check`, `lint-config` and `report` accept `--format sarif`: findings are
+  emitted as a SARIF 2.1.0 run for code-scanning integrations.
+- `python.imports` no longer reports imports guarded by
+  `except ImportError`/`ModuleNotFoundError` (the optional-dependency
+  pattern), and resolves source modules in O(1) instead of scanning the
+  module index per file — the gate is ~20x faster on a 2,000-file tree.
+- `scripts/bench.py` measures check latency on a generated synthetic
+  repository (default) or any policy root via `--root`; reports persist
+  under `.exitzero/bench/`.
+
 **v1.3**
 
 - `exitzero plugin ledger-publish` aggregates `.exitzero/runs/` receipts
