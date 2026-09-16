@@ -20,7 +20,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "fixtures"
-CLI = ROOT / "bin" / "aidd-gate"
+CLI = ROOT / "bin" / "exitzero"
 
 
 CASES: tuple[dict[str, Any], ...] = (
@@ -72,8 +72,8 @@ def safe_output_path(relative: str) -> Path:
 
 
 def prepare_outputs() -> None:
-    safe_output_path(".aidd-gate").mkdir(parents=True, exist_ok=True)
-    safe_output_path(".aidd-gate/fixture-receipts").mkdir(parents=True, exist_ok=True)
+    safe_output_path(".exitzero").mkdir(parents=True, exist_ok=True)
+    safe_output_path(".exitzero/fixture-receipts").mkdir(parents=True, exist_ok=True)
 
 
 def verify_run(
@@ -107,7 +107,7 @@ def verify_run(
             if not isinstance(run_id, str) or not run_id:
                 errors.append(f"{command} receipt has no run_id")
                 run_id = f"missing-{uuid.uuid4().hex}"
-            destination = safe_output_path(f".aidd-gate/fixture-receipts/{case_name}-{command}-{run_id}.json")
+            destination = safe_output_path(f".exitzero/fixture-receipts/{case_name}-{command}-{run_id}.json")
             shutil.copy2(receipt_path, destination)
             evidence["receipt_path"] = destination.relative_to(ROOT).as_posix()
 
@@ -145,7 +145,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     source = FIXTURES / name
     if not source.is_dir():
         raise AssertionError(f"fixture directory is missing: {source}")
-    with tempfile.TemporaryDirectory(prefix=f"aidd-gate-{name}-") as temporary:
+    with tempfile.TemporaryDirectory(prefix=f"exitzero-{name}-") as temporary:
         temporary_root = Path(temporary)
         shutil.copytree(source, temporary_root, dirs_exist_ok=True)
         check_process, check_payload = invoke(temporary_root, "check")
@@ -191,13 +191,13 @@ def main() -> int:
         print(f"{name}: {result['status']}")
     summary = {
         "schema_version": 1,
-        "tool": "aidd-gate fixture runner",
+        "tool": "exitzero fixture runner",
         "fixture_count": len(CASES),
         "passed": sum(result["status"] == "PASS" for result in results),
         "failed": sum(result["status"] == "FAIL" for result in results),
         "results": results,
     }
-    summary_path = safe_output_path(".aidd-gate/fixture-results.json")
+    summary_path = safe_output_path(".exitzero/fixture-results.json")
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     print(f"Summary: {summary_path}")
     return 0 if summary["failed"] == 0 else 1

@@ -58,7 +58,7 @@ or install dependencies. The helpers and review contract are in
 [examples/vecdiff](../examples/vecdiff).
 
 The recorded evidence is
-`.aidd-gate/pilots/vecdiff-20260916T043618Z-3ec7c14a/summary.json` in the local
+`.exitzero/pilots/vecdiff-20260916T043618Z-3ec7c14a/summary.json` in the local
 workspace. Each new invocation saves a separate directory containing the source
 manifest, gate code hashes, pytest counts, policy initialization log, numeric
 review log, case outputs and saved receipts. These local artifacts are ignored

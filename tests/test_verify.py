@@ -4,19 +4,19 @@ import textwrap
 import unittest
 from pathlib import Path
 
-from aidd_gate.api import CheckSpec, Context
-from aidd_gate_verify import check_command, check_imports, check_syntax, check_test_quality, register
+from exitzero.api import CheckSpec, Context
+from exitzero_verify import check_command, check_imports, check_syntax, check_test_quality, register
 
 
 class VerifyPluginTests(unittest.TestCase):
     def context(self, root: Path) -> Context:
-        return Context(root=root, policy={}, policy_path=root / "aidd-gate.toml")
+        return Context(root=root, policy={}, policy_path=root / "exitzero.toml")
 
     def spec(self, kind: str, paths=("**/*.py",), options=None) -> CheckSpec:
         return CheckSpec("test", kind, tuple(paths), options or {})
 
     def test_registers_all_v1_checks(self):
-        from aidd_gate.api import Registry
+        from exitzero.api import Registry
 
         registry = Registry()
         register(registry)

@@ -1,12 +1,12 @@
-<!-- aidd-gate:begin -->
-## aidd-gate policy
+<!-- exitzero:begin -->
+## exitzero policy
 
-Generated from policy. Edit the TOML, then run `aidd-gate init --sync`.
-Run `aidd-gate check` before merge; keep the JSON receipt as evidence.
-Run `aidd-gate lint-config` after changing agent configuration.
+Generated from policy. Edit the TOML, then run `exitzero init --sync`.
+Run `exitzero check` before merge; keep the JSON receipt as evidence.
+Run `exitzero lint-config` after changing agent configuration.
 
 Required checks:
 - `imports`: `python.imports` (src/**/*.py)
 
-Policy SHA-256: `0779f3810c24449ab226b95a7a53010cffa23b1350ae2115ea3b3ee3a58d5310`
-<!-- aidd-gate:end -->
+Policy SHA-256: `140ea7acc78869b72e40c1e5a3fb1ff14bc1c77723e161c426a5649a295f4303`
+<!-- exitzero:end -->

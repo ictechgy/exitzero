@@ -5,14 +5,14 @@ configuration. The build command uses the repository's existing virtual
 environment; `--no-build-isolation` keeps the build offline.
 
 ```sh
-cd /path/to/aidd-gate
+cd /path/to/exitzero
 .venv/bin/python -m pip wheel --no-index --no-build-isolation --no-deps . --wheel-dir dist
-.venv/bin/python scripts/release_check.py --wheel dist/aidd_gate-*.whl
+.venv/bin/python scripts/release_check.py --wheel dist/exitzero-*.whl
 ```
 
 `release_check.py` creates a fresh temporary virtual environment, runs its
 embedded `ensurepip`, installs only the selected wheel with `--no-index
---no-deps`, and invokes the installed `aidd-gate` command. It checks `init`,
+--no-deps`, and invokes the installed `exitzero` command. It checks `init`,
 `check`, `lint-config`, `report`, both `verify` and `harness` plugin entry-point
 aliases, and equality between JSON output and saved receipts.
 
@@ -25,7 +25,7 @@ are ignored.
 
 The temporary repository and virtual environment are removed after the run.
 The machine-readable schema-1 summary, bounded command output, and every gate
-receipt are retained under `.aidd-gate/releases/<run-id>/`. Command evidence
+receipt are retained under `.exitzero/releases/<run-id>/`. Command evidence
 applies only a small credential-like `token`/`password`/`secret`/`api-key`
 pattern redaction; it is not a general secret scanner. A missing receipt,
 receipt mismatch, dependency in wheel metadata, missing runtime package, failed

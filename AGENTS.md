@@ -20,8 +20,8 @@
 - Keep credentials, personal machine paths, local pilot copies and build output
   out of commits. Network access, credential reads and external writes follow
   the user's approved scope; public-document lookup is not publication approval.
-- Preserve the generated section below. Change `aidd-gate.toml` and run
-  `./bin/aidd-gate init --sync`; keep manual guidance outside its paired markers.
+- Preserve the generated section below. Change `exitzero.toml` and run
+  `./bin/exitzero init --sync`; keep manual guidance outside its paired markers.
 
 ## Scoped Guidance Index
 
@@ -38,18 +38,18 @@ and descendants; links do not extend their scope.
   `python3 scripts/ci.py` for the local acceptance sequence. A fixture with an
   expected nonzero exit is successful only when the runner confirms that result.
 - For guidance changes, verify links and marker preservation, then run
-  `./bin/aidd-gate lint-config --format json`. Preserve its receipt.
+  `./bin/exitzero lint-config --format json`. Preserve its receipt.
 - For package changes, follow [the release recipe](docs/RELEASE.md). Distinguish
   source tests, installed-wheel/Git-hook evidence, hosted CI and live IDE testing.
 - Reuse valid evidence for unchanged inputs. Record skipped tests and reasons;
   never report them as passed or treat local CI as hosted CI.
 
-<!-- aidd-gate:begin -->
-## aidd-gate policy
+<!-- exitzero:begin -->
+## exitzero policy
 
-Generated from policy. Edit the TOML, then run `aidd-gate init --sync`.
-Run `aidd-gate check` before merge; keep the JSON receipt as evidence.
-Run `aidd-gate lint-config` after changing agent configuration.
+Generated from policy. Edit the TOML, then run `exitzero init --sync`.
+Run `exitzero check` before merge; keep the JSON receipt as evidence.
+Run `exitzero lint-config` after changing agent configuration.
 
 Required checks:
 - `syntax`: `python.syntax` (packages/**/*.py, scripts/*.py, tests/test_*.py)
@@ -58,5 +58,5 @@ Required checks:
 - `regression-suite`: `command` (packages/**/*.py, scripts/run_tests.py, tests/test_*.py)
 - Rule `completion-evidence`: Require runner exit codes and persisted receipts before claiming completion.
 
-Policy SHA-256: `66c938e841a262a70e07786180885beed5be8b51a7e423f2811d8e85873c3ccf`
-<!-- aidd-gate:end -->
+Policy SHA-256: `bffff7433d758e6c4bd421b5006afc97a29e060d60bb59a4c726f79abd31942e`
+<!-- exitzero:end -->

@@ -1,4 +1,4 @@
-name: aidd-gate
+name: exitzero
 on: [push, pull_request]
 permissions:
   contents: read
@@ -22,8 +22,8 @@ jobs:
         with:
           name: gate-evidence-${{ matrix.python-version }}
           path: |
-            .aidd-gate/
-            examples/sample/.aidd-gate/
+            .exitzero/
+            examples/sample/.exitzero/
           include-hidden-files: true
   package:
     needs: gate
@@ -38,7 +38,7 @@ jobs:
       - name: Build the dependency-free wheel
         run: python -m pip wheel --no-build-isolation --no-deps . --wheel-dir dist
       - name: Verify the installed wheel and actual Git commits offline
-        run: python scripts/release_check.py --wheel dist/aidd_gate-*.whl
+        run: python scripts/release_check.py --wheel dist/exitzero-*.whl
       - name: Preserve distribution and installed-package evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -46,5 +46,5 @@ jobs:
           name: package-evidence
           path: |
             dist/*.whl
-            .aidd-gate/releases/
+            .exitzero/releases/
           include-hidden-files: true

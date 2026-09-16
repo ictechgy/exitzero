@@ -46,7 +46,7 @@ def main() -> int:
         except importlib.metadata.PackageNotFoundError:
             versions[name] = None
     summary = {"exit_code": code, **recorder.counts, "skipped_tests": recorder.skips, "dependencies": versions}
-    artifacts = root / ".aidd-gate"
+    artifacts = root / ".exitzero"
     artifacts.mkdir(exist_ok=True)
     (artifacts / "vecdiff-tests.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return code

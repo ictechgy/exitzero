@@ -1,7 +1,7 @@
 """Repository-scoped reads that avoid credentials and generated directories."""
 from pathlib import Path, PurePosixPath
 
-EXCLUDED = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__", ".aidd-gate", "build", "dist"})
+EXCLUDED = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__", ".exitzero", "build", "dist"})
 SENSITIVE_DIRS = frozenset({".ssh", ".aws", ".gnupg"})
 SENSITIVE_NAMES = frozenset({"auth.json", "credentials", "credentials.json", "tokens.json", "token.json", "id_rsa", "id_ed25519"})
 

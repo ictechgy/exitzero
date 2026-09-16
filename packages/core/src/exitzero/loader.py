@@ -7,7 +7,7 @@ from .api import API_VERSION, Registry
 
 def discover(names: list[str]) -> Registry:
     registry = Registry()
-    available = entry_points(group="aidd_gate.plugins")
+    available = entry_points(group="exitzero.plugins")
     for name in names:
         matches = [entry for entry in available if entry.name == name]
         if len(matches) > 1:

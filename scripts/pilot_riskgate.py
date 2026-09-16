@@ -11,10 +11,10 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 PIN = "62fc59bd5899c25e422d070915f2d2cd8d55ec51"
-CLI = ROOT / "bin/aidd-gate"
+CLI = ROOT / "bin/exitzero"
 PROFILE = ROOT / "examples/riskgate"
 sys.path.insert(0, str(ROOT / "packages/core/src"))
-from aidd_gate.files import safe_path
+from exitzero.files import safe_path
 
 
 from pilot_support import digest, execute, export, gate, tracked_state
@@ -55,7 +55,7 @@ def run(source: Path) -> tuple[dict, Path]:
     if before["head"] != PIN:
         raise ValueError("Source HEAD differs from the reviewed pilot revision")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    artifact = safe_path(ROOT, f".aidd-gate/pilots/riskgate-{timestamp}-{uuid.uuid4().hex[:8]}")
+    artifact = safe_path(ROOT, f".exitzero/pilots/riskgate-{timestamp}-{uuid.uuid4().hex[:8]}")
     artifact.mkdir(parents=True)
     summary = {"schema_version": 1, "source_commit": PIN, "status": "failed", "cases": [],
                "artifact": artifact.relative_to(ROOT).as_posix()}
@@ -67,21 +67,21 @@ def run(source: Path) -> tuple[dict, Path]:
         summary["gate_code_sha256"] = {p.relative_to(ROOT).as_posix(): digest(p.read_bytes()) for p in sorted([
             *ROOT.glob("packages/*/src/**/*.py"), CLI, Path(__file__).resolve(), ROOT / "scripts/pilot_support.py", *PROFILE.glob("*")]) if p.is_file()}
         original_agents = (template / "AGENTS.md").read_text()
-        shutil.copy2(PROFILE / "aidd-gate.toml", template / "aidd-gate.toml")
-        shutil.copy2(PROFILE / "run_tests.py", template / "_aidd_gate_pilot_tests.py")
+        shutil.copy2(PROFILE / "exitzero.toml", template / "exitzero.toml")
+        shutil.copy2(PROFILE / "run_tests.py", template / "_exitzero_pilot_tests.py")
         sync = execute(template, [sys.executable, str(CLI), "--root", str(template), "init", "--sync"], artifact / "sync.log")
         if sync["exit_code"] != 0 or not (template / "AGENTS.md").read_text().startswith(original_agents.rstrip()):
             raise AssertionError("Policy sync failed or overwrote original agent guidance")
         summary["original_agent_guidance_preserved"] = True
         summary["upstream"] = {}
-        for name, argv in (("tests", [sys.executable, "_aidd_gate_pilot_tests.py"]),
+        for name, argv in (("tests", [sys.executable, "_exitzero_pilot_tests.py"]),
                            ("policy-lint", [sys.executable, "-m", "riskgate", "lint", "riskgate.yaml"]),
                            ("policy-cases", [sys.executable, "-m", "riskgate", "test", "riskgate.yaml"])):
             result = execute(template, argv, artifact / f"upstream-{name}.log")
             summary["upstream"][name] = result
             if result["exit_code"] != 0:
                 raise AssertionError("Upstream baseline failed; inspect its recorded log")
-        summary["upstream_tests"] = json.loads((template / ".aidd-gate/riskgate-tests.json").read_text())
+        summary["upstream_tests"] = json.loads((template / ".exitzero/riskgate-tests.json").read_text())
         expectations = (
             ("baseline", 0, set(), 0),
             ("broken-import", 1, {"imports", "regression-suite", "policy-lint", "policy-cases"}, 0),
@@ -91,7 +91,7 @@ def run(source: Path) -> tuple[dict, Path]:
         )
         for name, expected, rules, lint_exit in expectations:
             case = artifact / name
-            shutil.copytree(template, case, ignore=shutil.ignore_patterns(".aidd-gate", "__pycache__", "*.pyc"))
+            shutil.copytree(template, case, ignore=shutil.ignore_patterns(".exitzero", "__pycache__", "*.pyc"))
             changed = mutate(case, name)
             check = gate(case, "check", artifact / f"{name}-check.log")
             lint = gate(case, "lint-config", artifact / f"{name}-lint.log")
@@ -102,7 +102,7 @@ def run(source: Path) -> tuple[dict, Path]:
                 passed = passed and checks.get("regression-suite") == "passed"
             result = {"name": name, "status": "passed" if passed else "failed", "changed_file": changed,
                       "expected_exit_code": expected, "expected_rules": sorted(rules), "check": check, "lint": lint}
-            tests_path = case / ".aidd-gate/riskgate-tests.json"
+            tests_path = case / ".exitzero/riskgate-tests.json"
             if tests_path.exists():
                 result["upstream_tests"] = json.loads(tests_path.read_text())
             summary["cases"].append(result)

@@ -20,8 +20,8 @@ CURSOR_EVENTS = {
 
 
 def _launcher() -> list[str]:
-    checkout = Path(__file__).resolve().parents[4] / "bin" / "aidd-gate"
-    return [sys.executable, str(checkout)] if checkout.is_file() else [sys.executable, "-m", "aidd_gate"]
+    checkout = Path(__file__).resolve().parents[4] / "bin" / "exitzero"
+    return [sys.executable, str(checkout)] if checkout.is_file() else [sys.executable, "-m", "exitzero"]
 
 
 def expected_cursor_command(root: Path, policy_path: Path, slot: str = "PostToolUse") -> str:
@@ -31,7 +31,7 @@ def expected_cursor_command(root: Path, policy_path: Path, slot: str = "PostTool
 
 
 def _manifest(root: Path) -> dict:
-    path = safe_path(root, ".aidd-gate/hooks.json")
+    path = safe_path(root, ".exitzero/hooks.json")
     if path.exists():
         value = json.loads(path.read_text(encoding="utf-8"))
         if (not isinstance(value, dict) or type(value.get("version")) is not int
@@ -44,7 +44,7 @@ def _manifest(root: Path) -> dict:
 
 def installed_inputs(root: Path) -> list[str]:
     """Include exactly the hook files inspected by the configuration linter."""
-    return [".aidd-gate/hooks.json", *_manifest(root)["files"]]
+    return [".exitzero/hooks.json", *_manifest(root)["files"]]
 
 
 def cursor_hook_error(entry: object) -> str | None:
@@ -94,7 +94,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         path = safe_path(root, relative)
         command = shlex.join([*_launcher(), "--root", str(root), "--policy", policy_path.relative_to(root).as_posix(),
                               "hooks", "run", "--slot", "pre-commit"])
-        content = "#!/bin/sh\n# aidd-gate managed hook\nexec " + command + "\n"
+        content = "#!/bin/sh\n# exitzero managed hook\nexec " + command + "\n"
         if path.exists() and path.read_text(encoding="utf-8") != content:
             raise ValueError("Existing pre-commit hook preserved; chain the CLI manually")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +102,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
     if adapter == "pre-commit":
         path.chmod(path.stat().st_mode | 0o111)
     manifest["files"][relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-    target = safe_path(root, ".aidd-gate/hooks.json")
+    target = safe_path(root, ".exitzero/hooks.json")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     return relative
@@ -121,10 +121,10 @@ def lint_installed(context: Context) -> list[Finding]:
 def cursor_response(receipt: dict, event: str, payload: dict) -> dict:
     passed = receipt["exit_code"] == 0
     if event in {"preToolUse", "beforeShellExecution", "beforeMCPExecution"}:
-        return {"permission": "allow" if passed else "deny", "user_message": "aidd-gate: " + receipt["status"],
-                "agent_message": "Review the aidd-gate run receipt." if not passed else ""}
+        return {"permission": "allow" if passed else "deny", "user_message": "exitzero: " + receipt["status"],
+                "agent_message": "Review the exitzero run receipt." if not passed else ""}
     if event == "postToolUse" and not passed:
-        return {"additional_context": "aidd-gate failed. Inspect the run receipt and fix the reported checks."}
+        return {"additional_context": "exitzero failed. Inspect the run receipt and fix the reported checks."}
     if event == "stop" and not passed and payload.get("status") != "aborted" and payload.get("loop_count", 0) < 1:
-        return {"followup_message": "aidd-gate failed. Run aidd-gate check, inspect the receipt, and fix the reported checks."}
+        return {"followup_message": "exitzero failed. Run exitzero check, inspect the receipt, and fix the reported checks."}
     return {}

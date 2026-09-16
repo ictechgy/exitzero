@@ -1,14 +1,14 @@
 # Plugin API, version 1
 
-One executable loads the modules listed in `plugins` in `aidd-gate.toml`.
-Installed third-party plugins may also expose the `aidd_gate.plugins` entry-point
+One executable loads the modules listed in `plugins` in `exitzero.toml`.
+Installed third-party plugins may also expose the `exitzero.plugins` entry-point
 group; the policy selects entry-point names explicitly. Discovery does not execute
 unselected plugins. Plugins are trusted local Python code, not a sandbox.
 
 A plugin exports `API_VERSION = 1` and `register(registry)`:
 
 ```python
-from aidd_gate.api import Finding
+from exitzero.api import Finding
 
 API_VERSION = 1
 
@@ -30,7 +30,7 @@ Registration methods:
 - `add_linter(name, handler(context))`
 - `add_hook(slot, handler(context, slot))`, for `PreToolUse`, `PostToolUse`,
   `pre-commit`, `CI`.
-- `add_command(name, handler(context, argv))`, called with `aidd-gate plugin NAME`.
+- `add_command(name, handler(context, argv))`, called with `exitzero plugin NAME`.
 
 Core owns policy parsing, the registry, dispatch, generated AGENTS section, hook
 adapters and receipt persistence. Plugins own check semantics. `check` runs
@@ -38,10 +38,10 @@ registered configuration linters before verification checks. `lint-config` runs
 linters without executing check commands. Hook slots use the same policy and
 runner; extra plugin handlers run after its checks.
 
-Shared helpers: `aidd_gate.files.select_files(root, patterns)` returns sorted,
+Shared helpers: `exitzero.files.select_files(root, patterns)` returns sorted,
 deduplicated repository files; it rejects absolute paths, traversal, symlinks and
-secret-like paths. `aidd_gate.policy.render_agents(policy)` returns the complete
-managed section, with `<!-- aidd-gate:begin -->` and `<!-- aidd-gate:end -->`.
+secret-like paths. `exitzero.policy.render_agents(policy)` returns the complete
+managed section, with `<!-- exitzero:begin -->` and `<!-- exitzero:end -->`.
 Plugins should validate their own `spec.options` and raise `ValueError` on invalid
 settings. Invalid settings must never silently disable a check.
 

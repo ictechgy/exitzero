@@ -1,15 +1,15 @@
 version = 1
-plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+plugins = ["exitzero_verify", "exitzero_harness"]
 
 [[checks]]
 id = "syntax"
 kind = "python.syntax"
-paths = ["riskgate/**/*.py", "tests/**/*.py", "_aidd_gate_pilot_tests.py"]
+paths = ["riskgate/**/*.py", "tests/**/*.py", "_exitzero_pilot_tests.py"]
 
 [[checks]]
 id = "imports"
 kind = "python.imports"
-paths = ["riskgate/**/*.py", "tests/**/*.py", "_aidd_gate_pilot_tests.py"]
+paths = ["riskgate/**/*.py", "tests/**/*.py", "_exitzero_pilot_tests.py"]
 [checks.options]
 roots = ["."]
 allow_modules = []
@@ -22,9 +22,9 @@ paths = ["tests/test_*.py"]
 [[checks]]
 id = "regression-suite"
 kind = "command"
-paths = ["riskgate/**/*.py", "tests/**/*.py", "tests/fixtures/**/*", "riskgate.yaml", "presets/*.yaml", "_aidd_gate_pilot_tests.py"]
+paths = ["riskgate/**/*.py", "tests/**/*.py", "tests/fixtures/**/*", "riskgate.yaml", "presets/*.yaml", "_exitzero_pilot_tests.py"]
 [checks.options]
-argv = ["{python}", "_aidd_gate_pilot_tests.py"]
+argv = ["{python}", "_exitzero_pilot_tests.py"]
 timeout = 60
 
 [[checks]]

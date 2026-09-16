@@ -19,7 +19,7 @@ class ReleaseRunnerTests(unittest.TestCase):
         self.assertEqual(summary["errors"], ["receipt archive failed (OSError)"])
 
     def test_timeout_bytes_are_retained_in_command_evidence(self):
-        with tempfile.TemporaryDirectory(prefix="aidd release test ") as temporary:
+        with tempfile.TemporaryDirectory(prefix="exitzero release test ") as temporary:
             root = Path(temporary)
             artifact = root / "artifact"
             artifact.mkdir()

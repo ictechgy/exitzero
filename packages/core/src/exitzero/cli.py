@@ -15,10 +15,10 @@ from .runner import run
 
 
 def parser() -> argparse.ArgumentParser:
-    cli = argparse.ArgumentParser(prog="aidd-gate")
+    cli = argparse.ArgumentParser(prog="exitzero")
     cli.add_argument("--version", action="version", version=__version__)
     cli.add_argument("--root", default=".", help="Repository directory")
-    cli.add_argument("--policy", default="aidd-gate.toml", help="Policy path relative to root")
+    cli.add_argument("--policy", default="exitzero.toml", help="Policy path relative to root")
     commands = cli.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init", help="Create policy and managed AGENTS section")
     init.add_argument("--sync", action="store_true", help="Regenerate only the managed AGENTS section")
@@ -55,7 +55,7 @@ def emit(receipt: dict, output: str) -> None:
     if output == "json":
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
         return
-    print(f"aidd-gate: {receipt['status']} (exit {receipt['exit_code']})")
+    print(f"exitzero: {receipt['status']} (exit {receipt['exit_code']})")
     for finding in receipt["findings"]:
         location = f" {finding['path']}" if finding.get("path") else ""
         if finding.get("line"):
@@ -170,18 +170,18 @@ def main(argv: list[str] | None = None) -> int:
                 path.write_text(generated_policy, encoding="utf-8")
                 ignore = safe_path(root, ".gitignore")
                 existing = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
-                additions = [item for item in ("/.aidd-gate/", "__pycache__/") if item not in existing.splitlines()]
+                additions = [item for item in ("/.exitzero/", "__pycache__/") if item not in existing.splitlines()]
                 if additions:
                     ignore.write_text(existing.rstrip() + ("\n" if existing else "") + "\n".join(additions) + "\n", encoding="utf-8")
                 if not select_files(root, ["**/*.py"]):
-                    example = safe_path(root, "aidd_gate_sample.py")
+                    example = safe_path(root, "exitzero_sample.py")
                     example.write_text('"""Replace this sample with your project checks."""\n\ndef add(left: int, right: int) -> int:\n    return left + right\n', encoding="utf-8")
             policy = load_policy(path)
             sync_agents(root, policy)
-            print("Policy and AGENTS.md synchronized. Run aidd-gate check to verify.")
+            print("Policy and AGENTS.md synchronized. Run exitzero check to verify.")
             return 0
         if args.command == "report":
-            directory = safe_path(root, ".aidd-gate/runs")
+            directory = safe_path(root, ".exitzero/runs")
             files = sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime_ns)
             if not files:
                 raise ValueError("No receipt exists; run check first")
@@ -200,7 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("Plugin command must return exit code 0, 1 or 2")
         return result
     except Exception as error:
-        print(f"aidd-gate: unable to complete command ({type(error).__name__}); check policy, paths and existing files.", file=sys.stderr)
+        print(f"exitzero: unable to complete command ({type(error).__name__}); check policy, paths and existing files.", file=sys.stderr)
         return 2
 
 

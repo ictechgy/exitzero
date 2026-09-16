@@ -7,13 +7,13 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = [sys.executable, str(ROOT / "bin/aidd-gate")]
+CLI = [sys.executable, str(ROOT / "bin/exitzero")]
 sys.path.insert(0, str(ROOT / "packages/core/src"))
-from aidd_gate.files import safe_path
+from exitzero.files import safe_path
 
 
 def main() -> int:
-    artifacts = safe_path(ROOT, ".aidd-gate")
+    artifacts = safe_path(ROOT, ".exitzero")
     artifacts.mkdir(exist_ok=True)
     jobs = [
         ("repository-check", [*CLI, "check", "--format", "json"]),
@@ -31,7 +31,7 @@ def main() -> int:
             code, output = process.returncode, process.stdout
         except subprocess.TimeoutExpired:
             code, output = 2, "CI job exceeded 180 seconds\n"
-        log = safe_path(ROOT, f".aidd-gate/{name}.log")
+        log = safe_path(ROOT, f".exitzero/{name}.log")
         log.write_text(output, encoding="utf-8")
         print(f"{name}: {'PASS' if code == 0 else 'FAIL'} (exit {code})", flush=True)
         if name == "fixtures" or code != 0:
@@ -40,8 +40,8 @@ def main() -> int:
                         "log": log.relative_to(ROOT).as_posix()})
     success = all(result["exit_code"] == 0 for result in results)
     summary = {"schema_version": 1, "status": "passed" if success else "failed", "jobs": results}
-    safe_path(ROOT, ".aidd-gate/ci-results.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print("Evidence: .aidd-gate/ci-results.json")
+    safe_path(ROOT, ".exitzero/ci-results.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print("Evidence: .exitzero/ci-results.json")
     return 0 if success else 1
 
 

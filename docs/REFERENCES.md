@@ -3,13 +3,13 @@
 Primary sources reviewed on 2026-09-16. The implementation is independently
 written; these sources informed design decisions and protocol compatibility.
 
-| Source | Observed idea | Decision for aidd-gate |
+| Source | Observed idea | Decision for exitzero |
 | --- | --- | --- |
 | [Weft / weftgate project site](https://weftgate.com/) and its linked [repository](https://github.com/spranab/weft) | Verification evidence is associated with the material being accepted. | Core requires a receipt with policy and selected-input hashes. Local JSON receipts remain unsigned; stronger provenance belongs to future ledger work. |
 | [harness-eval (whchoi98)](https://github.com/whchoi98/harness-eval) | Quick, Standard and Full modes combine deterministic checks with progressively deeper configuration evaluation. | Ship deterministic config lint in v1; deepen fixture scoring and optional agent evaluation in v1.1. |
 | [SWE-Gate paper, v1](https://arxiv.org/abs/2609.04167v1) and [replication repository](https://github.com/DeepSoftwareAnalytics/SWE-Gate) | Functional correctness and review-derived acceptance constraints have separate tests. | Use named command checks for executable review requirements; test exact error text, types and ordering. v1.1 should report functional and constraint outcomes separately and jointly. |
 
-These are our design interpretations, not claims that aidd-gate reproduces the
+These are our design interpretations, not claims that exitzero reproduces the
 referenced systems or their evaluation results. The Weft project site was read;
 its repository identity comes from the site's source link. For the brief's
 `harness-eval` reference, this document uses the linked Claude Code configuration
@@ -24,7 +24,7 @@ codes. The earlier `/docs/agent/hooks` address redirects here.
 
 The adapter now accepts native tool events, preserves existing prompt hooks, and
 installs a one-follow-up stop limit. Suppressing follow-up after an `aborted` stop
-is an aidd-gate choice to respect user cancellation. See [hook setup](HOOKS.md)
+is an exitzero choice to respect user cancellation. See [hook setup](HOOKS.md)
 for the supported mapping and exit behavior.
 
 `tests/test_hooks.py` exercises adapter subprocesses and reads their persisted

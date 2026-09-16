@@ -6,7 +6,7 @@ from pathlib import Path
 for source in sorted((Path(__file__).resolve().parents[1] / "packages").glob("*/src")):
     sys.path.insert(0, str(source))
 
-from aidd_gate.cli import main
+from exitzero.cli import main
 
 if __name__ == "__main__":
     raise SystemExit(main())

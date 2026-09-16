@@ -7,9 +7,9 @@ from .files import safe_path
 
 
 def persist(root: Path, receipt: dict) -> str:
-    directory = safe_path(root, ".aidd-gate/runs")
+    directory = safe_path(root, ".exitzero/runs")
     directory.mkdir(parents=True, exist_ok=True)
-    relative = f".aidd-gate/runs/{receipt['run_id']}.json"
+    relative = f".exitzero/runs/{receipt['run_id']}.json"
     destination = safe_path(root, relative)
     receipt["receipt"] = relative
     temporary: Path | None = None

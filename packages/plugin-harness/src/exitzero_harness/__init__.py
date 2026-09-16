@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from aidd_gate.api import API_VERSION, Context, Finding
-from aidd_gate.files import safe_path
-from aidd_gate.hooks import cursor_hook_error, lint_installed
-from aidd_gate.policy import BEGIN, END, render_agents
+from exitzero.api import API_VERSION, Context, Finding
+from exitzero.files import safe_path
+from exitzero.hooks import cursor_hook_error, lint_installed
+from exitzero.policy import BEGIN, END, render_agents
 
 
 _HARNESS_FIELDS = frozenset({"config_files", "rules"})

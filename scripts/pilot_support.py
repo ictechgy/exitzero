@@ -8,9 +8,9 @@ import sys
 import tarfile
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin/aidd-gate"
+CLI = ROOT / "bin/exitzero"
 sys.path.insert(0, str(ROOT / "packages/core/src"))
-from aidd_gate.files import safe_path
+from exitzero.files import safe_path
 
 
 def digest(data: bytes) -> str:

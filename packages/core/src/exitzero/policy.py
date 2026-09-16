@@ -8,11 +8,11 @@ import tomllib
 from .api import CheckSpec
 from .files import safe_path, validate_relative
 
-BEGIN = "<!-- aidd-gate:begin -->"
-END = "<!-- aidd-gate:end -->"
+BEGIN = "<!-- exitzero:begin -->"
+END = "<!-- exitzero:end -->"
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,99}\Z")
 DEFAULT_POLICY = '''version = 1
-plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+plugins = ["exitzero_verify", "exitzero_harness"]
 
 [[checks]]
 id = "syntax"
@@ -62,7 +62,7 @@ def python_profile_policy(
             syntax_paths.append(pattern)
     lines = [
         "version = 1",
-        'plugins = ["aidd_gate_verify", "aidd_gate_harness"]',
+        'plugins = ["exitzero_verify", "exitzero_harness"]',
         "",
         "[[checks]]",
         'id = "syntax"',
@@ -144,9 +144,9 @@ def specs(policy: dict) -> list[CheckSpec]:
 
 def render_agents(policy: dict) -> str:
     digest = hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    lines = [BEGIN, "## aidd-gate policy", "", "Generated from policy. Edit the TOML, then run `aidd-gate init --sync`.",
-             "Run `aidd-gate check` before merge; keep the JSON receipt as evidence.",
-             "Run `aidd-gate lint-config` after changing agent configuration.", "", "Required checks:"]
+    lines = [BEGIN, "## exitzero policy", "", "Generated from policy. Edit the TOML, then run `exitzero init --sync`.",
+             "Run `exitzero check` before merge; keep the JSON receipt as evidence.",
+             "Run `exitzero lint-config` after changing agent configuration.", "", "Required checks:"]
     for spec in specs(policy):
         scope = ", ".join(spec.paths) or "configured command"
         lines.append(f"- `{spec.id}`: `{spec.kind}` ({scope})")

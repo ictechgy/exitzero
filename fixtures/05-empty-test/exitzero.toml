@@ -1,5 +1,5 @@
 version = 1
-plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+plugins = ["exitzero_verify", "exitzero_harness"]
 
 [[checks]]
 id = "test-quality"

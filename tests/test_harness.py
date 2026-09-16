@@ -10,24 +10,24 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "packages" / "core" / "src"))
 sys.path.insert(0, str(ROOT / "packages" / "plugin-harness" / "src"))
 
-from aidd_gate.api import Context, Registry  # noqa: E402
-from aidd_gate.policy import render_agents  # noqa: E402
-from aidd_gate_harness import (  # noqa: E402
+from exitzero.api import Context, Registry  # noqa: E402
+from exitzero.policy import render_agents  # noqa: E402
+from exitzero_harness import (  # noqa: E402
     API_VERSION,
     lint_config,
     register,
 )
 
 
-BEGIN = "<!-- aidd-gate:begin -->"
-END = "<!-- aidd-gate:end -->"
+BEGIN = "<!-- exitzero:begin -->"
+END = "<!-- exitzero:end -->"
 
 
 def make_context(root: Path, policy=None):
     return Context(
         root=root,
         policy=policy or {},
-        policy_path=root / "aidd-gate.toml",
+        policy_path=root / "exitzero.toml",
     )
 
 
@@ -63,21 +63,21 @@ class HarnessPluginTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context = make_context(root)
-            with patch("aidd_gate_harness.render_agents", return_value=generated):
+            with patch("exitzero_harness.render_agents", return_value=generated):
                 missing = lint_config(context)
             self.assertTrue(any("missing" in finding.message for finding in missing))
 
             (root / "AGENTS.md").write_text(
                 f"{BEGIN}\none\n{END}\n{BEGIN}\ntwo\n{END}\n", encoding="utf-8"
             )
-            with patch("aidd_gate_harness.render_agents", return_value=generated):
+            with patch("exitzero_harness.render_agents", return_value=generated):
                 multiple = lint_config(context)
             self.assertTrue(any("multiple" in finding.message for finding in multiple))
 
             (root / "AGENTS.md").write_text(
                 f"{END}\nbroken\n{BEGIN}\n", encoding="utf-8"
             )
-            with patch("aidd_gate_harness.render_agents", return_value=generated):
+            with patch("exitzero_harness.render_agents", return_value=generated):
                 broken = lint_config(context)
             self.assertTrue(any("broken" in finding.message for finding in broken))
 
@@ -96,12 +96,12 @@ class HarnessPluginTests(unittest.TestCase):
                 encoding="utf-8",
             )
             context = make_context(root, policy)
-            with patch("aidd_gate_harness.render_agents", return_value=""):
+            with patch("exitzero_harness.render_agents", return_value=""):
                 findings = lint_config(context)
             self.assertFalse(any("config file" in finding.message for finding in findings))
 
             (root / "mcp.json").write_text("{broken", encoding="utf-8")
-            with patch("aidd_gate_harness.render_agents", return_value=""):
+            with patch("exitzero_harness.render_agents", return_value=""):
                 findings = lint_config(context)
             self.assertTrue(any("invalid JSON" in finding.message for finding in findings))
 
@@ -115,7 +115,7 @@ class HarnessPluginTests(unittest.TestCase):
             root = Path(tmp)
             (root / "bad.json").write_text("[]", encoding="utf-8")
             context = make_context(root, policy)
-            with patch("aidd_gate_harness.render_agents", return_value=""):
+            with patch("exitzero_harness.render_agents", return_value=""):
                 findings = lint_config(context)
             messages = [finding.message for finding in findings]
             self.assertTrue(any("not allowed" in message or "Credential-like" in message for message in messages))
@@ -135,7 +135,7 @@ class HarnessPluginTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context = make_context(root, policy)
-            with patch("aidd_gate_harness.render_agents", return_value=""):
+            with patch("exitzero_harness.render_agents", return_value=""):
                 findings = lint_config(context)
             messages = [finding.message for finding in findings]
             self.assertTrue(any("conflicting values" in message for message in messages))
@@ -152,7 +152,7 @@ class HarnessPluginTests(unittest.TestCase):
                     {
                         "version": 1,
                         "hooks": {
-                            "afterFileEdit": [{"command": "aidd-gate"}],
+                            "afterFileEdit": [{"command": "exitzero"}],
                             "futureSlot": [{"command": "future"}],
                         },
                     }
@@ -160,7 +160,7 @@ class HarnessPluginTests(unittest.TestCase):
                 encoding="utf-8",
             )
             context = make_context(root, policy)
-            with patch("aidd_gate_harness.render_agents", return_value=""):
+            with patch("exitzero_harness.render_agents", return_value=""):
                 findings = lint_config(context)
             self.assertEqual([f for f in findings if f.path == "hooks.json"], [])
 
@@ -168,7 +168,7 @@ class HarnessPluginTests(unittest.TestCase):
                 json.dumps({"version": True, "hooks": {"stop": [{"command": " "}, {"args": []}]}}),
                 encoding="utf-8",
             )
-            with patch("aidd_gate_harness.render_agents", return_value=""):
+            with patch("exitzero_harness.render_agents", return_value=""):
                 findings = lint_config(context)
             messages = [finding.message for finding in findings]
             self.assertTrue(any("version must be 1" in message for message in messages))
@@ -191,7 +191,7 @@ class HarnessPluginTests(unittest.TestCase):
                 encoding="utf-8",
             )
             context = make_context(root, policy)
-            with patch("aidd_gate_harness.render_agents", return_value=""):
+            with patch("exitzero_harness.render_agents", return_value=""):
                 findings = lint_config(context)
             messages = [finding.message for finding in findings]
             self.assertTrue(any("exactly one" in message for message in messages))

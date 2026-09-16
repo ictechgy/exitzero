@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aidd-gate"
+name = "exitzero"
 version = "0.1.0"
 description = "Offline policy and verification gates for AI-assisted coding teams"
 readme = "README.md"
@@ -12,12 +12,12 @@ license = {text = "MIT"}
 dependencies = []
 
 [project.scripts]
-aidd-gate = "aidd_gate.cli:main"
+exitzero = "exitzero.cli:main"
 
-[project.entry-points."aidd_gate.plugins"]
-verify = "aidd_gate_verify"
-harness = "aidd_gate_harness"
+[project.entry-points."exitzero.plugins"]
+verify = "exitzero_verify"
+harness = "exitzero_harness"
 
 [tool.setuptools]
-packages = ["aidd_gate", "aidd_gate_verify", "aidd_gate_harness", "aidd_gate_mcp_gateway", "aidd_gate_ledger"]
-package-dir = {aidd_gate = "packages/core/src/aidd_gate", aidd_gate_verify = "packages/plugin-verify/src/aidd_gate_verify", aidd_gate_harness = "packages/plugin-harness/src/aidd_gate_harness", aidd_gate_mcp_gateway = "packages/plugin-mcp-gateway/src/aidd_gate_mcp_gateway", aidd_gate_ledger = "packages/plugin-ledger/src/aidd_gate_ledger"}
+packages = ["exitzero", "exitzero_verify", "exitzero_harness", "exitzero_mcp_gateway", "exitzero_ledger"]
+package-dir = {exitzero = "packages/core/src/exitzero", exitzero_verify = "packages/plugin-verify/src/exitzero_verify", exitzero_harness = "packages/plugin-harness/src/exitzero_harness", exitzero_mcp_gateway = "packages/plugin-mcp-gateway/src/exitzero_mcp_gateway", exitzero_ledger = "packages/plugin-ledger/src/exitzero_ledger"}

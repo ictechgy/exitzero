@@ -7,12 +7,12 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
-CLI = REPO / "bin/aidd-gate"
+CLI = REPO / "bin/exitzero"
 
 
 class HookTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="aidd hook space ")
+        self.temp = tempfile.TemporaryDirectory(prefix="exitzero hook space ")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.assertEqual(self.cli("init").returncode, 0)
@@ -51,14 +51,14 @@ class HookTests(unittest.TestCase):
         self.assertEqual(json.loads(pre.stdout)["permission"], "deny")
         generic = self.cli("hooks", "run", "--slot", "CI")
         self.assertEqual(generic.returncode, 1)
-        receipts = [json.loads(p.read_text()) for p in (self.root / ".aidd-gate/runs").glob("*.json")]
+        receipts = [json.loads(p.read_text()) for p in (self.root / ".exitzero/runs").glob("*.json")]
         self.assertEqual(len(receipts), 4)
         self.assertTrue(all(r["exit_code"] == 1 for r in receipts))
 
     def test_invalid_cursor_input_has_error_receipt(self):
         result = self.cli("hooks", "run", "--adapter", "cursor", input="invalid-json")
         self.assertEqual(result.returncode, 2)
-        receipts = list((self.root / ".aidd-gate/runs").glob("*.json"))
+        receipts = list((self.root / ".exitzero/runs").glob("*.json"))
         self.assertEqual(len(receipts), 1)
         receipt = json.loads(receipts[0].read_text())
         self.assertEqual(receipt["exit_code"], 2)
@@ -70,9 +70,9 @@ class HookTests(unittest.TestCase):
                 result = self.cli("hooks", "run", "--adapter", "cursor", "--event", event,
                                   input=json.dumps({"hook_event_name": event, "tool_name": "Shell", "tool_input": {}}))
                 self.assertEqual(result.returncode, 0, result.stderr)
-                expected = {"permission": "allow", "user_message": "aidd-gate: passed", "agent_message": ""} if event == "preToolUse" else {}
+                expected = {"permission": "allow", "user_message": "exitzero: passed", "agent_message": ""} if event == "preToolUse" else {}
                 self.assertEqual(json.loads(result.stdout), expected)
-                receipt = json.loads(max((self.root / ".aidd-gate/runs").glob("*.json"), key=lambda p: p.stat().st_mtime_ns).read_text())
+                receipt = json.loads(max((self.root / ".exitzero/runs").glob("*.json"), key=lambda p: p.stat().st_mtime_ns).read_text())
                 self.assertEqual(receipt["hook_slot"], slot)
                 self.assertEqual(receipt["exit_code"], 0)
         (self.root / "broken.py").write_text("def broken(:\n")
@@ -85,7 +85,7 @@ class HookTests(unittest.TestCase):
                     self.assertIn("additional_context", response)
                 else:
                     self.assertEqual(response["permission"], "deny")
-        receipts = [json.loads(path.read_text()) for path in (self.root / ".aidd-gate/runs").glob("*.json")]
+        receipts = [json.loads(path.read_text()) for path in (self.root / ".exitzero/runs").glob("*.json")]
         self.assertEqual(sum(r["exit_code"] == 1 for r in receipts), 4)
 
     def test_cursor_aborted_stop_does_not_request_another_turn(self):
@@ -94,7 +94,7 @@ class HookTests(unittest.TestCase):
                           input='{"status":"aborted","loop_count":0}')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {})
-        receipt = json.loads(next((self.root / ".aidd-gate/runs").glob("*.json")).read_text())
+        receipt = json.loads(next((self.root / ".exitzero/runs").glob("*.json")).read_text())
         self.assertEqual(receipt["exit_code"], 1)
 
     def test_cursor_install_preserves_prompt_hooks(self):
@@ -134,7 +134,7 @@ class HookTests(unittest.TestCase):
         subprocess.run(["git", "-C", str(self.root), "add", "."], check=True)
         result = subprocess.run([str(hook)], cwd=self.root, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        sample = self.root / "aidd_gate_sample.py"
+        sample = self.root / "exitzero_sample.py"
         sample.write_text(sample.read_text() + "# unstaged edit\n")
         result = subprocess.run([str(hook)], cwd=self.root, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)

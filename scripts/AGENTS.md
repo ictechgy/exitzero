@@ -3,10 +3,10 @@
 - Runners prove observable behavior. Check process exits and saved receipts;
   preserve failure evidence before temporary directories are removed.
 - Keep these runners standard-library-only. Pilot test adapters may use the
-  target project's already-installed dependencies; do not add them to aidd-gate.
+  target project's already-installed dependencies; do not add them to exitzero.
 - Pilots export a pinned local commit, mutate separate copies and compare source
   tracked hashes, HEAD and Git status before/after. Keep artifacts under the
-  ignored `.aidd-gate/` directory and reject artifact-path symlinks or traversal.
+  ignored `.exitzero/` directory and reject artifact-path symlinks or traversal.
 - Record test counts, dependency versions and explicit skips. Preserve known
   external-integration exclusions; never silently skip a failing baseline to
   make an experiment pass. See [riskgate](../docs/PILOT_RISKGATE.md) and

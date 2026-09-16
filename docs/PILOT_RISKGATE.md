@@ -5,7 +5,7 @@ Run date: 2026-09-16. Source commit:
 
 The pilot exports the 56 committed files from a local riskgate checkout. All
 policy setup, generated documentation and fault injections happen in separate
-copies under `.aidd-gate/pilots/`. The source checkout's tracked file hashes,
+copies under `.exitzero/pilots/`. The source checkout's tracked file hashes,
 HEAD and Git status are compared before and after execution.
 
 ## Results
@@ -47,7 +47,7 @@ network or filesystem sandbox. Hooks are not installed into real agent settings.
 ## Reproduce
 
 Use a local riskgate checkout whose HEAD matches the commit above. From the
-aidd-gate checkout, run:
+exitzero checkout, run:
 
 ```sh
 python3 scripts/pilot_riskgate.py --source /path/to/riskgate
@@ -70,7 +70,7 @@ Each run creates a unique evidence directory containing:
 - Separate case copies, check/lint output logs, and ten saved gate receipts.
 
 The first recorded run is
-`.aidd-gate/pilots/riskgate-20260916T041646Z-a0e16ab6/summary.json` in the local
+`.exitzero/pilots/riskgate-20260916T041646Z-a0e16ab6/summary.json` in the local
 workspace. Evidence directories are ignored by Git; rerunning the command
 produces a new record. This pilot used the local CLI and did not run hosted CI
 or a live IDE integration.

@@ -1,12 +1,12 @@
-<!-- aidd-gate:begin -->
-## aidd-gate policy
+<!-- exitzero:begin -->
+## exitzero policy
 
-Generated from policy. Edit the TOML, then run `aidd-gate init --sync`.
-Run `aidd-gate check` before merge; keep the JSON receipt as evidence.
-Run `aidd-gate lint-config` after changing agent configuration.
+Generated from policy. Edit the TOML, then run `exitzero init --sync`.
+Run `exitzero check` before merge; keep the JSON receipt as evidence.
+Run `exitzero lint-config` after changing agent configuration.
 
 Required checks:
 - `review-contract`: `command` (configured command)
 
-Policy SHA-256: `63ea77f0a8ef7eedcb70fab8d9369af9699efbbdcda9ce1e1be3a25188d8dad2`
-<!-- aidd-gate:end -->
+Policy SHA-256: `a6b0427c789deb687c7e96111586ab7b476403a6a9de394d634416b08078d0e3`
+<!-- exitzero:end -->

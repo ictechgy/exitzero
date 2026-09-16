@@ -1,8 +1,8 @@
-# aidd-gate
+# exitzero
 
 **AI가 “끝났다”고 말해도, 검사를 통과하기 전에는 끝난 것이 아닙니다.**
 
-aidd-gate는 저장소의 정책을 실행하는 작은 개발 도구입니다. 같은 TOML 정책으로
+exitzero는 저장소의 정책을 실행하는 작은 개발 도구입니다. 같은 TOML 정책으로
 로컬 CLI, Git 훅, CI를 검사하고 매번 JSON 실행 영수증을 남깁니다. 사용자는 하나의
 명령을 쓰고, 내부는 작은 코어와 플러그인으로 나뉩니다.
 
@@ -16,12 +16,12 @@ Python 3.11 or newer is required. Runtime and tests use only the standard librar
 
 ```sh
 export PATH="$PWD/bin:$PATH"
-mkdir /tmp/aidd-gate-demo
-cd /tmp/aidd-gate-demo
-aidd-gate init
-aidd-gate check
-aidd-gate lint-config
-aidd-gate report --format json
+mkdir /tmp/exitzero-demo
+cd /tmp/exitzero-demo
+exitzero init
+exitzero check
+exitzero lint-config
+exitzero report --format json
 ```
 
 `init` creates a starter TOML policy, a managed section in `AGENTS.md`, and ignore
@@ -33,10 +33,10 @@ gate. A syntax pass is not a claim that your application works.
 For a Python repository, `init` can write the common static checks and your
 existing test/review commands in one step. Each command is parsed into argv and
 later runs with `shell=False`; `{python}` means the Python interpreter running
-`aidd-gate`.
+`exitzero`.
 
 ```sh
-aidd-gate init --profile python \
+exitzero init --profile python \
   --source-root src --source-root tests \
   --allow-module numpy --allow-module pytest \
   --test-command '{python} -m pytest' \
@@ -57,8 +57,8 @@ edit that check's `paths` in the policy to include those files.
 Run the included example, which exercises all four check types:
 
 ```sh
-./bin/aidd-gate --root examples/sample check
-./bin/aidd-gate --root examples/sample lint-config
+./bin/exitzero --root examples/sample check
+./bin/exitzero --root examples/sample lint-config
 ```
 
 For a conventional installation, use a virtual environment and `python -m pip
@@ -71,7 +71,7 @@ The checkout launcher above needs no build tools.
 
 ```toml
 version = 1
-plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+plugins = ["exitzero_verify", "exitzero_harness"]
 
 [[checks]]
 id = "syntax"
@@ -104,7 +104,7 @@ config_files = []
 rules = [{id = "error-text", value = "Tests assert the exact public error text."}]
 ```
 
-After editing the policy, run `aidd-gate init --sync`. Only the generated section
+After editing the policy, run `exitzero init --sync`. Only the generated section
 of `AGENTS.md` changes. Its fingerprint covers the complete parsed policy, so
 changing check options also creates detectable drift. Text outside the section
 stays yours. Harness rules are documentation and conflict detection, not semantic
@@ -129,15 +129,15 @@ understood by v1.
 ## Commands and outcomes
 
 ```sh
-aidd-gate init
-aidd-gate init --sync
-aidd-gate check --format json
-aidd-gate lint-config --format json
-aidd-gate hooks install --adapter cursor
-aidd-gate hooks install --adapter pre-commit
-aidd-gate hooks run --slot CI --format json
-aidd-gate report --format json
-aidd-gate plugin harness-eval   # Explicitly unavailable in v1: exit 2.
+exitzero init
+exitzero init --sync
+exitzero check --format json
+exitzero lint-config --format json
+exitzero hooks install --adapter cursor
+exitzero hooks install --adapter pre-commit
+exitzero hooks run --slot CI --format json
+exitzero report --format json
+exitzero plugin harness-eval   # Explicitly unavailable in v1: exit 2.
 ```
 
 Global `--root` and `--policy` options go before the subcommand. `check` runs
@@ -151,7 +151,7 @@ verification commands.
 | 2 | Invalid policy, missing plugin, execution error, or receipt could not be written |
 
 Every `check`, `lint-config`, and hook gate writes a unique JSON receipt under
-`.aidd-gate/runs/`, including failures and malformed policies. If storage fails,
+`.exitzero/runs/`, including failures and malformed policies. If storage fails,
 the command exits 2 and reports `receipt: null`; it cannot claim success.
 `--format json` prints the same machine-readable result. `report` reads the
 latest receipt; it does not run a fresh check. See [receipt schema](docs/receipt.schema.json).
@@ -177,8 +177,8 @@ python3 scripts/ci.py
 ```
 
 It runs the repository gate, config lint, sample gate and ten pass/fail fixtures,
-and writes `.aidd-gate/ci-results.json` plus logs. The GitHub workflow runs this
-same script and uploads `.aidd-gate/` evidence even on failure. Configure the CI
+and writes `.exitzero/ci-results.json` plus logs. The GitHub workflow runs this
+same script and uploads `.exitzero/` evidence even on failure. Configure the CI
 job as a required branch check in your hosting service; this repository does not
 change branch protection settings.
 

@@ -1,4 +1,4 @@
-"""Static verification checks for aidd-gate.
+"""Static verification checks for exitzero.
 
 The plugin deliberately uses only the Python standard library.  Checks return
 the core ``Finding`` value and never execute repository Python code (the
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable
 
-from aidd_gate.api import CheckSpec, Context, Finding
+from exitzero.api import CheckSpec, Context, Finding
 
 API_VERSION = 1
 
@@ -35,7 +35,7 @@ def _files(context: Context, spec: CheckSpec) -> list[Path]:
     """Use core's guarded selector, with a small bootstrap fallback.
 
     The fallback keeps the plugin importable while the core package is being
-    assembled.  Once ``aidd_gate.files`` is present, all path safety remains
+    assembled.  Once ``exitzero.files`` is present, all path safety remains
     owned by core as specified by the plugin contract.
     """
 
@@ -44,7 +44,7 @@ def _files(context: Context, spec: CheckSpec) -> list[Path]:
         raise ValueError("check paths must be a non-empty sequence of non-empty strings")
     if not patterns:
         raise ValueError(f"check {spec.id!r} selected no files")
-    from aidd_gate.files import select_files
+    from exitzero.files import select_files
 
     selected = select_files(context.root, patterns)
     if not selected:
@@ -119,7 +119,7 @@ def _validate_import_options(options: dict[str, Any]) -> tuple[list[str], list[s
 
 def _module_index(root: Path, roots: list[str]) -> dict[str, Path]:
     index: dict[str, Path] = {}
-    from aidd_gate.files import safe_path, select_files
+    from exitzero.files import safe_path, select_files
 
     for root_name in roots:
         base = safe_path(root, root_name)

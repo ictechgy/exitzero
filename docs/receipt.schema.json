@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "aidd-gate run receipt v1",
+  "title": "exitzero run receipt v1",
   "type": "object",
   "required": ["schema_version", "tool_version", "run_id", "started_at", "command", "hook_slot", "policy_sha256", "plugins", "inputs", "checks", "findings", "exit_code", "status", "duration_ms", "receipt"],
   "properties": {

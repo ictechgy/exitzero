@@ -28,7 +28,7 @@ def main() -> int:
                "errors": len(result.errors), "skipped": [{"test": test.id(), "reason": reason}
                                                         for test, reason in result.skipped],
                "successful": result.wasSuccessful() and result.testsRun > len(result.skipped)}
-    artifacts = root / ".aidd-gate"
+    artifacts = root / ".exitzero"
     artifacts.mkdir(exist_ok=True)
     (artifacts / "riskgate-tests.json").write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     return 0 if summary["successful"] else 1

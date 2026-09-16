@@ -49,7 +49,7 @@ def run(source: Path, python: str) -> tuple[dict, Path]:
     if before["head"] != PIN:
         raise ValueError("Source HEAD differs from the reviewed pilot revision")
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    artifact = safe_path(ROOT, f".aidd-gate/pilots/vecdiff-{timestamp}-{uuid.uuid4().hex[:8]}")
+    artifact = safe_path(ROOT, f".exitzero/pilots/vecdiff-{timestamp}-{uuid.uuid4().hex[:8]}")
     artifact.mkdir(parents=True)
     summary = {"schema_version": 1, "source_commit": PIN, "status": "failed", "cases": [],
                "artifact": artifact.relative_to(ROOT).as_posix()}
@@ -62,21 +62,21 @@ def run(source: Path, python: str) -> tuple[dict, Path]:
             *ROOT.glob("packages/*/src/**/*.py"), CLI, Path(__file__).resolve(),
             ROOT / "scripts/pilot_support.py", *PROFILE.glob("*.py")]) if p.is_file()}
         original_agents = (template / "AGENTS.md").read_text()
-        shutil.copy2(PROFILE / "run_tests.py", template / "_aidd_gate_pilot_tests.py")
-        shutil.copy2(PROFILE / "review_contract.py", template / "_aidd_gate_review_contract.py")
+        shutil.copy2(PROFILE / "run_tests.py", template / "_exitzero_pilot_tests.py")
+        shutil.copy2(PROFILE / "review_contract.py", template / "_exitzero_review_contract.py")
         init = execute(template, [python, str(CLI), "--root", str(template), "init", "--profile", "python",
                                   "--source-root", "src", "--source-root", "tests",
                                   "--allow-module", "numpy", "--allow-module", "pytest", "--allow-module", "faiss",
-                                  "--test-command", "{python} _aidd_gate_pilot_tests.py",
-                                  "--review-command", "{python} _aidd_gate_review_contract.py"], artifact / "init.log")
+                                  "--test-command", "{python} _exitzero_pilot_tests.py",
+                                  "--review-command", "{python} _exitzero_review_contract.py"], artifact / "init.log")
         if init["exit_code"] != 0 or not (template / "AGENTS.md").read_text().startswith(original_agents.rstrip()):
             raise AssertionError("Generated policy failed or overwrote original guidance")
         summary["original_agent_guidance_preserved"] = True
-        summary["upstream"] = execute(template, [python, "_aidd_gate_pilot_tests.py"], artifact / "upstream-tests.log")
-        summary["upstream_tests"] = json.loads((template / ".aidd-gate/vecdiff-tests.json").read_text())
+        summary["upstream"] = execute(template, [python, "_exitzero_pilot_tests.py"], artifact / "upstream-tests.log")
+        summary["upstream_tests"] = json.loads((template / ".exitzero/vecdiff-tests.json").read_text())
         if summary["upstream"]["exit_code"] != 0:
             raise AssertionError("Upstream baseline failed")
-        summary["review_contract"] = execute(template, [python, "_aidd_gate_review_contract.py"], artifact / "review-contract.log")
+        summary["review_contract"] = execute(template, [python, "_exitzero_review_contract.py"], artifact / "review-contract.log")
         if summary["review_contract"]["exit_code"] != 0:
             raise AssertionError("Numeric review contract baseline failed")
         expectations = (
@@ -90,7 +90,7 @@ def run(source: Path, python: str) -> tuple[dict, Path]:
         )
         for name, expected, rules, lint_exit in expectations:
             case = artifact / name
-            shutil.copytree(template, case, ignore=shutil.ignore_patterns(".aidd-gate", "__pycache__", "*.pyc", ".pytest_cache"))
+            shutil.copytree(template, case, ignore=shutil.ignore_patterns(".exitzero", "__pycache__", "*.pyc", ".pytest_cache"))
             changed = mutate(case, name)
             check = gate(case, "check", artifact / f"{name}-check.log", python)
             lint = gate(case, "lint-config", artifact / f"{name}-lint.log", python)
@@ -103,7 +103,7 @@ def run(source: Path, python: str) -> tuple[dict, Path]:
                 passed = passed and checks.get("imports") == "passed"
             result = {"name": name, "status": "passed" if passed else "failed", "changed_file": changed,
                       "expected_exit_code": expected, "expected_rules": sorted(rules), "check": check, "lint": lint}
-            tests_path = case / ".aidd-gate/vecdiff-tests.json"
+            tests_path = case / ".exitzero/vecdiff-tests.json"
             if tests_path.exists():
                 result["upstream_tests"] = json.loads(tests_path.read_text())
             summary["cases"].append(result)

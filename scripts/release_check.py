@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a built aidd-gate wheel in a fresh, offline environment.
+"""Verify a built exitzero wheel in a fresh, offline environment.
 
 The runner deliberately exercises the installed console script and an installed
 pre-commit hook.  Its temporary repository and virtual environment are removed
@@ -44,7 +44,7 @@ def _runs_directory(repository: Path) -> Path:
 
     if repository.is_symlink():
         raise ReleaseFailure("temporary repository is symlinked")
-    gate = repository / ".aidd-gate"
+    gate = repository / ".exitzero"
     runs = gate / "runs"
     if gate.is_symlink() or runs.is_symlink():
         raise ReleaseFailure("receipt directory contains a symlink")
@@ -64,7 +64,7 @@ def _validate_receipt(receipt: object, source: Path) -> dict[str, Any]:
         raise ReleaseFailure(f"receipt has an invalid exit code: {source.name}")
     if receipt.get("status") != RECEIPT_STATUS[exit_code]:
         raise ReleaseFailure(f"receipt status disagrees with exit code: {source.name}")
-    if receipt.get("receipt") != f".aidd-gate/runs/{source.name}":
+    if receipt.get("receipt") != f".exitzero/runs/{source.name}":
         raise ReleaseFailure(f"receipt path does not match its source: {source.name}")
     return receipt
 
@@ -73,21 +73,21 @@ def _returned_receipt_path(repository: Path, receipt_name: object) -> Path:
     if not isinstance(receipt_name, str):
         raise ReleaseFailure("command did not return a receipt path")
     relative = Path(receipt_name)
-    if relative.is_absolute() or ".." in relative.parts or relative.parts != (".aidd-gate", "runs", relative.name):
-        raise ReleaseFailure("returned receipt path is outside .aidd-gate/runs")
+    if relative.is_absolute() or ".." in relative.parts or relative.parts != (".exitzero", "runs", relative.name):
+        raise ReleaseFailure("returned receipt path is outside .exitzero/runs")
     runs = _runs_directory(repository)
     candidate = repository / relative
     if candidate.parent != runs or any(part.is_symlink() for part in (candidate,)):
         raise ReleaseFailure("returned receipt path contains a symlink")
     if not candidate.is_file() or not candidate.resolve().is_relative_to(runs.resolve()):
-        raise ReleaseFailure("returned receipt path is outside .aidd-gate/runs")
+        raise ReleaseFailure("returned receipt path is outside .exitzero/runs")
     return candidate
 
 
 def _artifact_root(run_id: str) -> Path:
     """Create an output directory without following an existing symlink."""
 
-    gate = ROOT / ".aidd-gate"
+    gate = ROOT / ".exitzero"
     release = gate / "releases"
     for path in (gate, release):
         if path.exists() and path.is_symlink():
@@ -171,7 +171,7 @@ class ReleaseRun:
             if key not in self.receipts:
                 shutil.copy2(source, destination)
                 self.receipts[key] = f"receipts/{destination_name}"
-            archived.append({"source": f".aidd-gate/runs/{source.name}", "path": self.receipts[key], "receipt": receipt})
+            archived.append({"source": f".exitzero/runs/{source.name}", "path": self.receipts[key], "receipt": receipt})
         return archived
 
     def save(self, summary: dict[str, Any]) -> None:
@@ -208,7 +208,7 @@ def _apply_workspace_errors(summary: dict[str, Any], state: dict[str, Any]) -> N
 def _temporary_workspace(state: dict[str, Any]):
     """Keep the temporary repository alive long enough to archive its receipts."""
 
-    with tempfile.TemporaryDirectory(prefix="aidd-gate-release-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="exitzero-release-") as temporary:
         try:
             yield Path(temporary)
         finally:
@@ -238,13 +238,13 @@ def _git(run: ReleaseRun, repo: Path, env: dict[str, str], args: list[str], labe
 
 
 def _commit(run: ReleaseRun, repo: Path, env: dict[str, str], message: str, label: str, expected: int) -> subprocess.CompletedProcess[str]:
-    args = ["-c", "user.name=aidd-gate release test", "-c", "user.email=release-test@example.invalid",
+    args = ["-c", "user.name=exitzero release test", "-c", "user.email=release-test@example.invalid",
             "-c", "commit.gpgSign=false", "-c", "tag.gpgSign=false", "commit", "-m", message]
     return _git(run, repo, env, args, label, expected)
 
 
 def _run_names(repository: Path) -> set[str]:
-    runs = repository / ".aidd-gate" / "runs"
+    runs = repository / ".exitzero" / "runs"
     return {path.name for path in runs.glob("*.json")} if runs.is_dir() else set()
 
 
@@ -316,7 +316,7 @@ def _validate_wheel(wheel: Path) -> dict[str, Any]:
     digest = hashlib.sha256(wheel.read_bytes()).hexdigest()
     with zipfile.ZipFile(wheel) as archive:
         names = set(archive.namelist())
-        required = {"aidd_gate/__init__.py", "aidd_gate/cli.py", "aidd_gate_verify/__init__.py", "aidd_gate_harness/__init__.py"}
+        required = {"exitzero/__init__.py", "exitzero/cli.py", "exitzero_verify/__init__.py", "exitzero_harness/__init__.py"}
         missing = sorted(required - names)
         if missing:
             raise ReleaseFailure("wheel is missing runtime packages: " + ", ".join(missing))
@@ -331,7 +331,7 @@ def _validate_wheel(wheel: Path) -> dict[str, Any]:
         if not entry_points:
             raise ReleaseFailure("wheel has no entry point metadata")
         entry_text = archive.read(entry_points[0]).decode("utf-8", errors="strict")
-        if "verify = aidd_gate_verify" not in entry_text or "harness = aidd_gate_harness" not in entry_text:
+        if "verify = exitzero_verify" not in entry_text or "harness = exitzero_harness" not in entry_text:
             raise ReleaseFailure("wheel is missing verify/harness plugin entry points")
     return {"path": str(wheel), "sha256": digest, "size": wheel.stat().st_size}
 
@@ -340,7 +340,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:10]
     artifact = _artifact_root(run_id)
     wheel = wheel.resolve()
-    summary: dict[str, Any] = {"schema_version": 1, "tool": "aidd-gate release wheel runner", "run_id": run_id,
+    summary: dict[str, Any] = {"schema_version": 1, "tool": "exitzero release wheel runner", "run_id": run_id,
                                "status": "failed", "wheel": {"path": str(wheel)}, "checks": [], "errors": []}
     try:
         summary["wheel"] = _validate_wheel(wheel)
@@ -364,7 +364,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
             install = release.command("install-wheel", [str(python), "-m", "pip", "install", "--no-index", "--no-deps", "--disable-pip-version-check", str(wheel)], temporary_root, env, timeout=180)
             if install.returncode != 0:
                 raise ReleaseFailure(f"offline wheel install exited {install.returncode}")
-            cli = venv_root / "bin" / "aidd-gate"
+            cli = venv_root / "bin" / "exitzero"
             if not cli.is_file():
                 raise ReleaseFailure(f"installed console script is missing: {cli}")
             repo = temporary_root / "repo"
@@ -373,7 +373,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
             init = release.command("init", [str(cli), "--root", str(repo), "init"], repo, env)
             if init.returncode != 0:
                 raise ReleaseFailure(f"installed init exited {init.returncode}")
-            policy = repo / "aidd-gate.toml"
+            policy = repo / "exitzero.toml"
             policy.write_text(re.sub(r"^plugins\s*=.*$", 'plugins = ["verify", "harness"]', policy.read_text(encoding="utf-8"), count=1, flags=re.MULTILINE), encoding="utf-8")
             sync = release.command("init-sync-entry-point-aliases", [str(cli), "--root", str(repo), "init", "--sync"], repo, env)
             if sync.returncode != 0:
@@ -452,7 +452,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Verify an aidd-gate wheel offline in a fresh virtualenv and Git repository")
+    parser = argparse.ArgumentParser(description="Verify an exitzero wheel offline in a fresh virtualenv and Git repository")
     parser.add_argument("--wheel", required=True, type=Path, help="Path to the wheel to install")
     args = parser.parse_args(argv)
     try:
