@@ -54,6 +54,27 @@ class HookTests(unittest.TestCase):
         self.assertEqual(len(receipts), 4)
         self.assertTrue(all(r["exit_code"] == 1 for r in receipts))
 
+    def test_invalid_cursor_input_has_error_receipt(self):
+        result = self.cli("hooks", "run", "--adapter", "cursor", input="invalid-json")
+        self.assertEqual(result.returncode, 2)
+        receipts = list((self.root / ".aidd-gate/runs").glob("*.json"))
+        self.assertEqual(len(receipts), 1)
+        receipt = json.loads(receipts[0].read_text())
+        self.assertEqual(receipt["exit_code"], 2)
+        self.assertEqual(receipt["status"], "error")
+
+    def test_install_rejects_invalid_existing_config_without_modifying_it(self):
+        directory = self.root / ".cursor"
+        directory.mkdir()
+        path = directory / "hooks.json"
+        for config in ({"version": True, "hooks": {}},
+                       {"version": 1, "hooks": {"stop": [{"command": " "}]}}):
+            original = json.dumps(config)
+            path.write_text(original)
+            result = self.cli("hooks", "install")
+            self.assertEqual(result.returncode, 2, result.stdout)
+            self.assertEqual(path.read_text(), original)
+
     def test_precommit_preserves_existing_hook_and_checks_index_consistency(self):
         subprocess.run(["git", "init", "-q", str(self.root)], check=True)
         hook = self.root / ".git/hooks/pre-commit"

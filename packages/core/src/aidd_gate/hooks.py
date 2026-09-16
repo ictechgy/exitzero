@@ -27,10 +27,17 @@ def _manifest(root: Path) -> dict:
     path = safe_path(root, ".aidd-gate/hooks.json")
     if path.exists():
         value = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict) or value.get("version") != 1 or not isinstance(value.get("files"), dict):
+        if (not isinstance(value, dict) or type(value.get("version")) is not int
+                or value["version"] != 1 or not isinstance(value.get("files"), dict)
+                or any(not isinstance(digest, str) or len(digest) != 64 for digest in value["files"].values())):
             raise ValueError("Invalid hook installation manifest")
         return value
     return {"version": 1, "files": {}}
+
+
+def installed_inputs(root: Path) -> list[str]:
+    """Include exactly the hook files inspected by the configuration linter."""
+    return [".aidd-gate/hooks.json", *_manifest(root)["files"]]
 
 
 def install(root: Path, policy_path: Path, adapter: str) -> str:
@@ -39,10 +46,11 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         relative = ".cursor/hooks.json"
         path = safe_path(root, relative)
         data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"version": 1, "hooks": {}}
-        if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("hooks"), dict):
+        if (not isinstance(data, dict) or type(data.get("version")) is not int
+                or data["version"] != 1 or not isinstance(data.get("hooks"), dict)):
             raise ValueError("Invalid existing Cursor hook configuration")
         hooks = data["hooks"].setdefault("stop", [])
-        if not isinstance(hooks, list) or any(not isinstance(h, dict) or not isinstance(h.get("command"), str) for h in hooks):
+        if not isinstance(hooks, list) or any(not isinstance(h, dict) or not isinstance(h.get("command"), str) or not h["command"].strip() for h in hooks):
             raise ValueError("Invalid existing Cursor stop hooks")
         command = expected_cursor_command(root, policy_path)
         if not any(h["command"] == command for h in hooks):

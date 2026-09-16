@@ -86,6 +86,25 @@ class CliTests(unittest.TestCase):
         self.assertEqual(self.cli("init").returncode, 2)
         self.assertEqual(policy.read_bytes(), original)
 
+    def test_lint_does_not_execute_command_and_rejects_no_linter(self):
+        self.init()
+        policy = self.root / "aidd-gate.toml"
+        policy.write_text('''version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+[[checks]]
+id = "command"
+kind = "command"
+[checks.options]
+argv = ["{python}", "-c", "from pathlib import Path; Path('sentinel').touch()"]
+''')
+        self.assertEqual(self.cli("init", "--sync").returncode, 0)
+        self.assertEqual(self.cli("lint-config").returncode, 0)
+        self.assertFalse((self.root / "sentinel").exists())
+        policy.write_text(policy.read_text().replace(', "aidd_gate_harness"', ''))
+        result = self.cli("lint-config", "--format", "json")
+        self.assertEqual(result.returncode, 2, result.stdout)
+        self.assertFalse((self.root / "sentinel").exists())
+
     def test_symlink_receipt_directory_cannot_escape(self):
         self.init()
         with tempfile.TemporaryDirectory() as outside:
@@ -122,6 +141,51 @@ kind = "extension.check"
                                (["plugin", "extension-command", "ok"], 0)):
             result = subprocess.run(base + args, env=env, capture_output=True, text=True, timeout=30)
             self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+    def test_plugin_exit_and_invalid_result_cannot_skip_receipt(self):
+        (self.root / "aidd-gate.toml").write_text('''version = 1
+plugins = ["broken_extension"]
+[[checks]]
+id = "broken"
+kind = "broken"
+''')
+        for body in ("raise SystemExit(0)", "return [Finding('broken', object())]"):
+            (self.root / "broken_extension.py").write_text(
+                "from aidd_gate.api import Finding\nAPI_VERSION = 1\n"
+                "def check(ctx, spec):\n    " + body + "\n"
+                "def register(registry):\n    registry.add_check('broken', check)\n")
+            env = dict(os.environ, PYTHONPATH=str(self.root), PYTHONDONTWRITEBYTECODE="1")
+            result = subprocess.run([sys.executable, str(CLI), "--root", str(self.root), "check", "--format", "json"],
+                                    env=env, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertTrue((self.root / payload["receipt"]).is_file())
+            self.assertEqual(payload["status"], "error")
+
+    def test_installed_hook_changes_during_run_are_detected(self):
+        import hashlib
+        self.init()
+        hook = self.root / "hook.sh"
+        hook.write_text("#!/bin/sh\nexit 0\n")
+        ledger = self.root / ".aidd-gate"
+        ledger.mkdir()
+        (ledger / "hooks.json").write_text(json.dumps({"version": 1, "files": {
+            "hook.sh": hashlib.sha256(hook.read_bytes()).hexdigest()}}))
+        (self.root / "aidd-gate.toml").write_text('''version = 1
+plugins = ["aidd_gate_verify", "aidd_gate_harness"]
+[[checks]]
+id = "mutation"
+kind = "command"
+[checks.options]
+argv = ["{python}", "-c", "from pathlib import Path; Path('hook.sh').write_text('changed')"]
+''')
+        self.assertEqual(self.cli("init", "--sync").returncode, 0)
+        result = self.cli("check", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertIn("core.inputs-changed", [f["rule"] for f in payload["findings"]])
+        self.assertIn("hook.sh", payload["inputs"])
+        self.assertIn(".aidd-gate/hooks.json", payload["inputs"])
 
 
 if __name__ == "__main__":

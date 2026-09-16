@@ -1,0 +1,459 @@
+"""Static verification checks for aidd-gate.
+
+The plugin deliberately uses only the Python standard library.  Checks return
+the core ``Finding`` value and never execute repository Python code (the
+``command`` check is the explicit exception, and runs only its configured
+argv).
+"""
+
+from __future__ import annotations
+
+import ast
+import math
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Iterable
+
+from aidd_gate.api import CheckSpec, Context, Finding
+
+API_VERSION = 1
+
+
+def register(registry: Any) -> None:
+    """Register all verification checks exposed by v1."""
+
+    registry.add_check("python.syntax", check_syntax)
+    registry.add_check("python.imports", check_imports)
+    registry.add_check("python.test-quality", check_test_quality)
+    registry.add_check("command", check_command)
+
+
+def _files(context: Context, spec: CheckSpec) -> list[Path]:
+    """Use core's guarded selector, with a small bootstrap fallback.
+
+    The fallback keeps the plugin importable while the core package is being
+    assembled.  Once ``aidd_gate.files`` is present, all path safety remains
+    owned by core as specified by the plugin contract.
+    """
+
+    patterns = spec.paths
+    if not isinstance(patterns, (tuple, list)) or not all(isinstance(pattern, str) and pattern for pattern in patterns):
+        raise ValueError("check paths must be a non-empty sequence of non-empty strings")
+    if not patterns:
+        raise ValueError(f"check {spec.id!r} selected no files")
+    from aidd_gate.files import select_files
+
+    selected = select_files(context.root, patterns)
+    if not selected:
+        raise ValueError(f"check {spec.id!r} selected no files")
+    return [Path(path) for path in selected]
+
+
+def _relative(root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _parse(path: Path, root: Path, rule: str = "python.syntax") -> tuple[ast.AST | None, Finding | None]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except SyntaxError as exc:
+        return None, Finding(
+            rule,
+            "Python syntax is invalid",
+            _relative(root, path),
+            exc.lineno,
+        )
+    except (OSError, UnicodeError):
+        return None, Finding(
+            rule,
+            "Unable to read Python source",
+            _relative(root, path),
+            None,
+        )
+    return tree, None
+
+
+def check_syntax(context: Context, spec: CheckSpec) -> list[Finding]:
+    """Parse selected Python files without importing or executing them."""
+
+    if not isinstance(spec.options, dict) or spec.options:
+        raise ValueError("python.syntax does not accept options")
+    findings: list[Finding] = []
+    for path in _files(context, spec):
+        _, finding = _parse(path, context.root, spec.id)
+        if finding is not None:
+            findings.append(finding)
+    return findings
+
+
+def _list_option(options: dict[str, Any], name: str, default: list[str]) -> list[str]:
+    value = options.get(name, default)
+    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+        raise ValueError(f"{name} must be a list of non-empty strings")
+    return value
+
+
+def _validate_import_options(options: dict[str, Any]) -> tuple[list[str], list[str]]:
+    if not isinstance(options, dict):
+        raise ValueError("python.imports options must be a table")
+    unknown = set(options).difference({"roots", "allow_modules"})
+    if unknown:
+        raise ValueError("unsupported python.imports option")
+    roots = _list_option(options, "roots", ["."])
+    allow_modules = _list_option(options, "allow_modules", [])
+    for root in roots:
+        path = Path(root)
+        if path.is_absolute() or ".." in path.parts:
+            raise ValueError("roots must be relative and cannot traverse the repository")
+    for module in allow_modules:
+        if any(not part.isidentifier() for part in module.split(".")):
+            raise ValueError("allow_modules must contain dotted module names")
+    return roots, allow_modules
+
+
+def _module_index(root: Path, roots: list[str]) -> dict[str, Path]:
+    index: dict[str, Path] = {}
+    from aidd_gate.files import safe_path, select_files
+
+    for root_name in roots:
+        base = safe_path(root, root_name)
+        if not base.exists() or not base.is_dir():
+            raise ValueError(f"import root does not exist: {root_name}")
+        pattern = "**/*.py" if root_name == "." else f"{Path(root_name).as_posix()}/**/*.py"
+        for path in select_files(root, (pattern,)):
+            try:
+                relative = path.resolve().relative_to(base.resolve())
+            except ValueError:
+                continue
+            parts = list(relative.with_suffix("").parts)
+            if parts[-1] == "__init__":
+                parts.pop()
+            if not parts or any(not part.isidentifier() for part in parts):
+                continue
+            name = ".".join(parts)
+            index.setdefault(name, path)
+    return index
+
+
+def _module_symbols(path: Path) -> set[str]:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, UnicodeError, SyntaxError):
+        return set()
+    symbols: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            symbols.add(node.name)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets: Iterable[ast.expr]
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+            else:
+                targets = (node.target,)
+            for target in targets:
+                if isinstance(target, ast.Name):
+                    symbols.add(target.id)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                symbols.add(alias.asname or alias.name.split(".")[0])
+    return symbols
+
+
+def _stdlib_module(name: str) -> bool:
+    top = name.split(".", 1)[0]
+    stdlib = getattr(sys, "stdlib_module_names", frozenset())
+    return top in stdlib or top in {"__future__", "builtins"}
+
+
+def _resolve_relative(node: ast.ImportFrom, current: str) -> str | None:
+    current_parts = current.split(".")
+    if current_parts and current_parts[-1] == "__init__":
+        current_parts.pop()
+    elif current_parts:
+        current_parts.pop()
+    if node.level < 1 or node.level - 1 > len(current_parts):
+        return None
+    if not current_parts:
+        return None
+    prefix = current_parts[: len(current_parts) - node.level + 1]
+    if node.module:
+        prefix.extend(node.module.split("."))
+    return ".".join(prefix)
+
+
+def _source_module(path: Path, root: Path, index: dict[str, Path]) -> str | None:
+    resolved = path.resolve()
+    for name, candidate in index.items():
+        if candidate.resolve() == resolved:
+            return f"{name}.__init__" if path.name == "__init__.py" else name
+    return None
+
+
+def _attribute_chain(node: ast.Attribute | ast.Name) -> list[str] | None:
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if not isinstance(node, ast.Attribute):
+        return None
+    prefix = _attribute_chain(node.value) if isinstance(node.value, (ast.Attribute, ast.Name)) else None
+    return prefix + [node.attr] if prefix else None
+
+
+def _rebound_names(tree: ast.AST, imported: set[str]) -> set[str]:
+    """Return imported names that may be rebound in any scope.
+
+    Scope reconstruction is deliberately conservative: if an imported module
+    name is reused as an argument, assignment target, or imported symbol,
+    attribute checks for that name are skipped to avoid false positives.
+    """
+
+    rebound: set[str] = set()
+
+    def add_target(target: ast.AST) -> None:
+        if isinstance(target, ast.Name):
+            rebound.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for item in target.elts:
+                add_target(item)
+        elif isinstance(target, ast.Starred):
+            add_target(target.value)
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            for target in targets:
+                add_target(target)
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            add_target(node.target)
+        elif isinstance(node, (ast.NamedExpr,)):
+            add_target(node.target)
+        elif isinstance(node, (ast.comprehension,)):
+            add_target(node.target)
+        elif isinstance(node, (ast.With, ast.AsyncWith)):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    add_target(item.optional_vars)
+        elif isinstance(node, ast.ExceptHandler) and node.name:
+            rebound.add(node.name)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in imported:
+                rebound.add(node.name)
+            args = node.args.posonlyargs + node.args.args + node.args.kwonlyargs
+            if node.args.vararg:
+                args.append(node.args.vararg)
+            if node.args.kwarg:
+                args.append(node.args.kwarg)
+            rebound.update(arg.arg for arg in args)
+        elif isinstance(node, ast.ClassDef):
+            if node.name in imported:
+                rebound.add(node.name)
+        elif isinstance(node, ast.Delete):
+            for target in node.targets:
+                add_target(target)
+        elif isinstance(node, ast.ImportFrom):
+            rebound.update(alias.asname or alias.name for alias in node.names if alias.name != "*")
+    return rebound.intersection(imported)
+
+
+def check_imports(context: Context, spec: CheckSpec) -> list[Finding]:
+    """Resolve local imports and local module attributes from ASTs only."""
+
+    roots, allow_modules = _validate_import_options(spec.options)
+    index = _module_index(context.root, roots)
+    allowed = set(allow_modules)
+    findings: list[Finding] = []
+    for path in _files(context, spec):
+        tree, syntax_finding = _parse(path, context.root, spec.id)
+        if syntax_finding is not None:
+            findings.append(syntax_finding)
+            continue
+        if tree is None:
+            continue
+        current = _source_module(path, context.root, index)
+        imported_modules: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    module = alias.name
+                    top = module.split(".", 1)[0]
+                    local = module in index or any(name.startswith(module + ".") for name in index)
+                    if not local and not _stdlib_module(module) and module not in allowed and top not in allowed:
+                        findings.append(Finding(spec.id, f"Import {module!r} cannot be resolved", _relative(context.root, path), node.lineno))
+                    if local:
+                        imported_modules[alias.asname or top] = module if alias.asname else top
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:
+                    module = _resolve_relative(node, current or "")
+                else:
+                    module = node.module or ""
+                if not module:
+                    findings.append(Finding(spec.id, "Relative import cannot be resolved", _relative(context.root, path), node.lineno))
+                    continue
+                top = module.split(".", 1)[0]
+                local_path = index.get(module)
+                local = local_path is not None or any(name.startswith(module + ".") for name in index)
+                if not local and not _stdlib_module(module) and module not in allowed and top not in allowed:
+                    findings.append(Finding(spec.id, f"Import {module!r} cannot be resolved", _relative(context.root, path), node.lineno))
+                    continue
+                if local_path is not None:
+                    symbols = _module_symbols(local_path)
+                    for alias in node.names:
+                        if alias.name == "*":
+                            continue
+                        if alias.name not in symbols and f"{module}.{alias.name}" not in index:
+                            findings.append(Finding(spec.id, f"Imported symbol {alias.name!r} from {module!r} cannot be resolved", _relative(context.root, path), node.lineno))
+                elif local:
+                    # A package child may be imported even when its package
+                    # __init__ does not define the child symbol.
+                    for alias in node.names:
+                        child = f"{module}.{alias.name}"
+                        if child not in index and alias.name != "*":
+                            findings.append(Finding(spec.id, f"Imported symbol {alias.name!r} from {module!r} cannot be resolved", _relative(context.root, path), node.lineno))
+
+        shadowed = _rebound_names(tree, set(imported_modules))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute):
+                continue
+            chain = _attribute_chain(node)
+            if not chain:
+                continue
+            module = imported_modules.get(chain[0])
+            if not module or chain[0] in shadowed or module not in index:
+                continue
+            for attr in chain[1:]:
+                child = f"{module}.{attr}"
+                if child in index:
+                    module = child
+                    continue
+                if attr in _module_symbols(index[module]):
+                    break
+                findings.append(Finding(spec.id, f"Module attribute {module}.{attr} cannot be resolved", _relative(context.root, path), node.lineno))
+                break
+    return findings
+
+
+def _literal(node: ast.AST) -> tuple[bool, Any]:
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes, int, float, bool, type(None))):
+        return True, node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.Not, ast.USub, ast.UAdd)):
+        valid, value = _literal(node.operand)
+        if not valid:
+            return False, None
+        if isinstance(node.op, ast.Not):
+            return True, not value
+        return True, -value if isinstance(node.op, ast.USub) else +value
+    return False, None
+
+
+def _constant_assertion(node: ast.expr) -> bool:
+    valid, _ = _literal(node)
+    if valid:
+        return True
+    if isinstance(node, ast.Compare) and len(node.ops) == 1:
+        left_valid, left = _literal(node.left)
+        right_valid, right = _literal(node.comparators[0])
+        if left_valid and right_valid:
+            op = node.ops[0]
+            return isinstance(op, (ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Is, ast.IsNot, ast.In, ast.NotIn))
+    return False
+
+
+def _vacuous_unittest(node: ast.Call) -> bool:
+    if not isinstance(node.func, ast.Attribute) or not isinstance(node.func.value, ast.Name) or node.func.value.id != "self":
+        return False
+    name = node.func.attr
+    if name in {"assertTrue", "assertFalse", "assertIsNone", "assertIsNotNone"} and node.args:
+        valid, value = _literal(node.args[0])
+        return valid and ((name == "assertTrue" and bool(value)) or (name == "assertFalse" and not bool(value)) or (name == "assertIsNone" and value is None) or (name == "assertIsNotNone" and value is not None))
+    if name in {"assertEqual", "assertNotEqual", "assertIs", "assertIsNot"} and len(node.args) >= 2:
+        first_valid, first = _literal(node.args[0])
+        second_valid, second = _literal(node.args[1])
+        if first_valid and second_valid:
+            if name in {"assertEqual", "assertIs"}:
+                return first == second
+            return first != second
+    return False
+
+
+def check_test_quality(context: Context, spec: CheckSpec) -> list[Finding]:
+    """Flag only obvious test-quality problems; this is not semantic proof."""
+
+    if not isinstance(spec.options, dict) or spec.options:
+        raise ValueError("python.test-quality does not accept options")
+    findings: list[Finding] = []
+    for path in _files(context, spec):
+        tree, syntax_finding = _parse(path, context.root, spec.id)
+        if syntax_finding is not None:
+            findings.append(syntax_finding)
+            continue
+        if tree is None:
+            continue
+        tests: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+                tests.append(node)
+        if not tests:
+            findings.append(Finding(spec.id, "No test cases found", _relative(context.root, path), 1))
+            continue
+        for node in tests:
+            body = list(node.body)
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+                body.pop(0)
+            if not body or all(isinstance(item, (ast.Pass, ast.Expr)) and not (isinstance(item, ast.Expr) and not isinstance(item.value, ast.Constant)) for item in body):
+                findings.append(Finding(spec.id, "Test body is empty or documentation-only", _relative(context.root, path), node.lineno))
+                continue
+            for item in ast.walk(node):
+                if isinstance(item, ast.Assert) and _constant_assertion(item.test):
+                    findings.append(Finding(spec.id, "Test assertion is obviously constant", _relative(context.root, path), item.lineno))
+                elif isinstance(item, ast.Call) and _vacuous_unittest(item):
+                    findings.append(Finding(spec.id, "Test assertion is obviously constant", _relative(context.root, path), item.lineno))
+    return findings
+
+
+def _validate_command_options(options: dict[str, Any]) -> tuple[list[str], float]:
+    if not isinstance(options, dict):
+        raise ValueError("command options must be a table")
+    if set(options).difference({"argv", "timeout"}):
+        raise ValueError("unsupported command option")
+    argv = options.get("argv")
+    if not isinstance(argv, list) or not argv or not all(isinstance(item, str) and item for item in argv):
+        raise ValueError("command argv must be a non-empty list of strings")
+    timeout = options.get("timeout", 30)
+    if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0 or timeout > 300:
+        raise ValueError("command timeout must be greater than zero and at most 300 seconds")
+    return [sys.executable if item == "{python}" else item for item in argv], float(timeout)
+
+
+def check_command(context: Context, spec: CheckSpec) -> list[Finding]:
+    """Run a configured argv with a bounded timeout and generic findings."""
+
+    argv, timeout = _validate_command_options(spec.options)
+    kwargs: dict[str, Any] = {"cwd": str(context.root), "shell": False, "stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL, "stderr": subprocess.DEVNULL}
+    if os.name == "posix":
+        kwargs["start_new_session"] = True
+    elif hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    try:
+        process = subprocess.Popen(argv, **kwargs)
+    except OSError:
+        return [Finding(spec.id, "Configured command could not be started")]
+    try:
+        process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except OSError:
+            process.kill()
+        process.wait()
+        return [Finding(spec.id, "Configured command timed out")]
+    if process.returncode:
+        return [Finding(spec.id, f"Configured command failed with exit code {process.returncode}")]
+    return []

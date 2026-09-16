@@ -11,13 +11,22 @@ from . import __version__
 from .api import Context, Finding
 from .files import safe_path, select_files
 from .ledger import persist
+from .hooks import installed_inputs
 from .loader import discover
 from .policy import load_policy, specs
 
 
 def _findings(values: list[Finding]) -> list[Finding]:
-    if not isinstance(values, list) or any(not isinstance(f, Finding) or f.severity not in {"error", "warning"} for f in values):
+    if not isinstance(values, list):
         raise ValueError("Plugin returned invalid findings")
+    for finding in values:
+        if (not isinstance(finding, Finding)
+                or not isinstance(finding.rule, str) or not finding.rule
+                or not isinstance(finding.message, str)
+                or (finding.path is not None and not isinstance(finding.path, str))
+                or (finding.line is not None and (type(finding.line) is not int or finding.line < 1))
+                or finding.severity not in ("error", "warning")):
+            raise ValueError("Plugin returned invalid findings")
     return values
 
 
@@ -25,14 +34,14 @@ def _snapshot(root: Path, policy: dict, policy_path: Path) -> dict[str, str]:
     files = {policy_path}
     for spec in specs(policy):
         files.update(select_files(root, spec.paths))
-    for name in ["AGENTS.md", ".cursor/hooks.json", *policy.get("harness", {}).get("config_files", [])]:
+    for name in ["AGENTS.md", ".cursor/hooks.json", *installed_inputs(root), *policy.get("harness", {}).get("config_files", [])]:
         candidate = safe_path(root, name)
         if candidate.is_file():
             files.add(candidate)
     return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)}
 
 
-def run(root: Path, policy_name: str, command: str, slot: str | None = None) -> dict:
+def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, input_error: bool = False) -> dict:
     started = time.monotonic()
     receipt = {"schema_version": 1, "tool_version": __version__, "run_id": uuid.uuid4().hex,
                "started_at": datetime.now(timezone.utc).isoformat(), "command": command,
@@ -45,6 +54,8 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None) -> 
         receipt["policy_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
         policy = load_policy(path)
         registry = discover(policy["plugins"])
+        if command == "lint-config" and not registry.linters:
+            raise ValueError("No config linter is registered")
         receipt["plugins"] = policy["plugins"]
         context = Context(root, policy, path)
         if slot == "pre-commit":
@@ -72,10 +83,13 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None) -> 
                     findings.extend(_findings(handler(context, slot)))
         if _snapshot(root, policy, path) != receipt["inputs"]:
             findings.append(Finding("core.inputs-changed", "Inspected files changed during the run; rerun against stable inputs."))
-    except Exception as error:
+    except (Exception, SystemExit, KeyboardInterrupt) as error:
         operational_error = True
         # Exception text may contain TOML values, file content or credentials.
         findings.append(Finding("core.error", f"Unable to complete run ({type(error).__name__}); inspect policy, paths and plugin settings."))
+    if input_error:
+        operational_error = True
+        findings.append(Finding("core.hook-input", "Invalid hook input; expected a JSON object and a nonnegative integer loop_count."))
     receipt["exit_code"] = 2 if operational_error else int(any(f.severity == "error" for f in findings))
     receipt["status"] = {0: "passed", 1: "failed", 2: "error"}[receipt["exit_code"]]
     receipt["findings"] = [asdict(f) for f in findings]

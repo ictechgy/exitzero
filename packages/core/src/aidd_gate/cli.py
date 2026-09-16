@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("Invalid Cursor payload")
             except (ValueError, OSError):
                 # Still execute and persist the actual gate outcome for every invocation.
-                receipt = run(root, args.policy, "check", CURSOR_EVENTS[args.event])
+                receipt = run(root, args.policy, "check", CURSOR_EVENTS[args.event], input_error=True)
                 print(json.dumps({"error": "Invalid Cursor JSON input", "receipt": receipt["receipt"]}))
                 return 2
             receipt = run(root, args.policy, "check", CURSOR_EVENTS[args.event])
