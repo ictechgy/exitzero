@@ -199,6 +199,25 @@ class HarnessPluginTests(unittest.TestCase):
             self.assertTrue(any("env must be a string map" in message for message in messages))
             self.assertTrue(any("command must be a non-empty string" in message for message in messages))
 
+    def test_cursor_prompt_hooks_are_linted_without_execution(self):
+        policy = {"checks": [{"id": "syntax", "kind": "python.syntax"}],
+                  "harness": {"config_files": ["hooks.json"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "AGENTS.md").write_text(render_agents(policy) + "\n")
+            config = root / "hooks.json"
+            config.write_text(json.dumps({"version": 1, "hooks": {"preToolUse": [
+                {"type": "prompt", "prompt": "Check tool inputs without executing this text.", "timeout": 10},
+                {"type": "command", "command": "do-not-execute-this"},
+            ]}}))
+            self.assertEqual(lint_config(make_context(root, policy)), [])
+            for entry in ({"type": "prompt", "prompt": " "}, {"type": "prompt", "prompt": 3},
+                          {"type": "prompt", "command": "echo wrong field"}, {"type": "unknown", "command": "echo"}):
+                with self.subTest(entry=entry):
+                    config.write_text(json.dumps({"version": 1, "hooks": {"stop": [entry]}}))
+                    findings = lint_config(make_context(root, policy))
+                    self.assertTrue(any(f.path == "hooks.json" for f in findings))
+
     def test_agents_read_uses_core_safe_path_for_symlinks(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
             root = Path(tmp)

@@ -11,7 +11,7 @@ from typing import Any
 
 from aidd_gate.api import API_VERSION, Context, Finding
 from aidd_gate.files import safe_path
-from aidd_gate.hooks import lint_installed
+from aidd_gate.hooks import cursor_hook_error, lint_installed
 from aidd_gate.policy import BEGIN, END, render_agents
 
 
@@ -206,8 +206,9 @@ def _validate_config_shape(document: Any, relative: str) -> list[Finding]:
                     findings.append(Finding("harness.config", f"Cursor hook entries must be lists: {relative}", relative))
                     continue
                 for entry in entries:
-                    if not isinstance(entry, dict) or not isinstance(entry.get("command"), str) or not entry["command"].strip():
-                        findings.append(Finding("harness.config", f"Cursor hook entries require a non-empty command: {relative}", relative))
+                    error = cursor_hook_error(entry)
+                    if error:
+                        findings.append(Finding("harness.config", error, relative))
     if "mcpServers" in document:
         recognized = True
         servers = document["mcpServers"]

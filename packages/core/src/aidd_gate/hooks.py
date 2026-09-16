@@ -9,7 +9,14 @@ import sys
 from .api import Context, Finding
 from .files import safe_path
 
-CURSOR_EVENTS = {"beforeShellExecution": "PreToolUse", "beforeMCPExecution": "PreToolUse", "afterFileEdit": "PostToolUse", "stop": "PostToolUse"}
+CURSOR_EVENTS = {
+    "preToolUse": "PreToolUse",
+    "postToolUse": "PostToolUse",
+    "beforeShellExecution": "PreToolUse",
+    "beforeMCPExecution": "PreToolUse",
+    "afterFileEdit": "PostToolUse",
+    "stop": "PostToolUse",
+}
 
 
 def _launcher() -> list[str]:
@@ -18,7 +25,7 @@ def _launcher() -> list[str]:
 
 
 def expected_cursor_command(root: Path, policy_path: Path, slot: str = "PostToolUse") -> str:
-    event = "stop" if slot == "PostToolUse" else "beforeShellExecution"
+    event = "stop" if slot == "PostToolUse" else "preToolUse"
     return shlex.join([*_launcher(), "--root", str(root), "--policy", str(policy_path.relative_to(root)),
                        "hooks", "run", "--adapter", "cursor", "--event", event])
 
@@ -40,6 +47,19 @@ def installed_inputs(root: Path) -> list[str]:
     return [".aidd-gate/hooks.json", *_manifest(root)["files"]]
 
 
+def cursor_hook_error(entry: object) -> str | None:
+    """Validate execution fields shared by Cursor installation and config lint."""
+    if not isinstance(entry, dict):
+        return "Cursor hook entries must be objects"
+    kind = entry.get("type", "command")
+    if kind not in ("command", "prompt"):
+        return "Cursor hook type must be command or prompt"
+    field = "prompt" if kind == "prompt" else "command"
+    if not isinstance(entry.get(field), str) or not entry[field].strip():
+        return f"Cursor hook entries require a non-empty {field}"
+    return None
+
+
 def install(root: Path, policy_path: Path, adapter: str) -> str:
     manifest = _manifest(root)
     if adapter == "cursor":
@@ -50,11 +70,14 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
                 or data["version"] != 1 or not isinstance(data.get("hooks"), dict)):
             raise ValueError("Invalid existing Cursor hook configuration")
         hooks = data["hooks"].setdefault("stop", [])
-        if not isinstance(hooks, list) or any(not isinstance(h, dict) or not isinstance(h.get("command"), str) or not h["command"].strip() for h in hooks):
+        if not isinstance(hooks, list) or any(cursor_hook_error(h) for h in hooks):
             raise ValueError("Invalid existing Cursor stop hooks")
         command = expected_cursor_command(root, policy_path)
-        if not any(h["command"] == command for h in hooks):
-            hooks.append({"command": command})
+        owned = next((h for h in hooks if h.get("type", "command") == "command" and h.get("command") == command), None)
+        if owned is None:
+            hooks.append({"command": command, "loop_limit": 1})
+        else:
+            owned.setdefault("loop_limit", 1)
         content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     else:
         # Git executes hooks relative to the worktree root. Respect custom hook paths.
@@ -97,9 +120,11 @@ def lint_installed(context: Context) -> list[Finding]:
 
 def cursor_response(receipt: dict, event: str, payload: dict) -> dict:
     passed = receipt["exit_code"] == 0
-    if event in {"beforeShellExecution", "beforeMCPExecution"}:
+    if event in {"preToolUse", "beforeShellExecution", "beforeMCPExecution"}:
         return {"permission": "allow" if passed else "deny", "user_message": "aidd-gate: " + receipt["status"],
                 "agent_message": "Review the aidd-gate run receipt." if not passed else ""}
-    if event == "stop" and not passed and payload.get("loop_count", 0) < 1:
+    if event == "postToolUse" and not passed:
+        return {"additional_context": "aidd-gate failed. Inspect the run receipt and fix the reported checks."}
+    if event == "stop" and not passed and payload.get("status") != "aborted" and payload.get("loop_count", 0) < 1:
         return {"followup_message": "aidd-gate failed. Run aidd-gate check, inspect the receipt, and fix the reported checks."}
     return {}

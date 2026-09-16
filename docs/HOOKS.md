@@ -10,8 +10,9 @@ aidd-gate hooks install --adapter cursor
 aidd-gate lint-config
 ```
 
-Installation appends a command to project `.cursor/hooks.json` under `hooks.stop`
-and preserves other hook entries. Repeating installation with the same executable
+Installation appends a command with `loop_limit: 1` to project `.cursor/hooks.json`
+under `hooks.stop` and preserves existing command and prompt hook entries.
+Repeating installation with the same executable
 is idempotent. It records the configuration fingerprint in `.aidd-gate/hooks.json`
 for drift detection. Review and reinstall after intentionally changing hooks.
 The generated command uses absolute interpreter and checkout paths; reinstall
@@ -21,21 +22,32 @@ hook paths as a portable team configuration.
 The stop adapter reads Cursor JSON from stdin and emits only Cursor JSON on
 stdout. A failed check returns a `followup_message` for `loop_count = 0`; later
 loops return `{}` to avoid an endless repair loop. A passing check returns `{}`.
+When `status` is `aborted`, aidd-gate records the gate outcome and returns `{}`
+so user cancellation does not start another repair turn.
 This asks the agent to repair the patch; it does not enforce merge protection.
 The underlying receipt preserves the real gate exit code.
 
 Additional adapter entry points are available for explicit manual integration:
 
 ```sh
+aidd-gate hooks run --adapter cursor --event preToolUse
+aidd-gate hooks run --adapter cursor --event postToolUse
 aidd-gate hooks run --adapter cursor --event beforeShellExecution
 aidd-gate hooks run --adapter cursor --event beforeMCPExecution
 aidd-gate hooks run --adapter cursor --event afterFileEdit
 ```
 
 Pre events map to core `PreToolUse`; after/stop map to `PostToolUse`. Pre events
-emit `permission: allow|deny`. Do not install them indiscriminately: blocking
+emit `permission: allow|deny`; `postToolUse` supplies `additional_context` on
+failure. Do not install them indiscriminately: blocking
 every shell call can also block the commands needed to repair a failing patch.
 They are not the v1.2 tool allowlist feature.
+
+Cursor uses JSON responses on process exit 0; exit 2 blocks a permission action.
+Other nonzero exits can let the action proceed. Therefore ordinary gate violations
+use JSON denial with adapter exit 0, while operational/input errors exit 2. The
+receipt retains the original 0/1/2 gate result. These semantics were checked
+against [Cursor's official reference](https://cursor.com/docs/hooks) on 2026-09-16.
 
 Cursor protocol fixtures exercise the adapter locally. A live Cursor session is
 a separate integration check; do not infer it from installation output.

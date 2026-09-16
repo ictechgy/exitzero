@@ -32,6 +32,7 @@ class HookTests(unittest.TestCase):
         hooks = json.loads(config.read_text())["hooks"]["stop"]
         self.assertEqual(len(hooks), 2)
         self.assertEqual(hooks[0]["command"], "echo existing")
+        self.assertEqual(hooks[1]["loop_limit"], 1)
         installed = subprocess.run(shlex.split(hooks[1]["command"]), input='{"loop_count":0}',
                                    capture_output=True, text=True, timeout=30, cwd=self.root)
         self.assertEqual(installed.returncode, 0, installed.stderr)
@@ -62,6 +63,53 @@ class HookTests(unittest.TestCase):
         receipt = json.loads(receipts[0].read_text())
         self.assertEqual(receipt["exit_code"], 2)
         self.assertEqual(receipt["status"], "error")
+
+    def test_cursor_native_tool_events_preserve_gate_outcomes(self):
+        for event, slot in (("preToolUse", "PreToolUse"), ("postToolUse", "PostToolUse")):
+            with self.subTest(event=event):
+                result = self.cli("hooks", "run", "--adapter", "cursor", "--event", event,
+                                  input=json.dumps({"hook_event_name": event, "tool_name": "Shell", "tool_input": {}}))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                expected = {"permission": "allow", "user_message": "aidd-gate: passed", "agent_message": ""} if event == "preToolUse" else {}
+                self.assertEqual(json.loads(result.stdout), expected)
+                receipt = json.loads(max((self.root / ".aidd-gate/runs").glob("*.json"), key=lambda p: p.stat().st_mtime_ns).read_text())
+                self.assertEqual(receipt["hook_slot"], slot)
+                self.assertEqual(receipt["exit_code"], 0)
+        (self.root / "broken.py").write_text("def broken(:\n")
+        for event in ("preToolUse", "beforeShellExecution", "beforeMCPExecution", "postToolUse"):
+            with self.subTest(failed_event=event):
+                result = self.cli("hooks", "run", "--adapter", "cursor", "--event", event, input='{}')
+                self.assertEqual(result.returncode, 0, result.stderr)
+                response = json.loads(result.stdout)
+                if event == "postToolUse":
+                    self.assertIn("additional_context", response)
+                else:
+                    self.assertEqual(response["permission"], "deny")
+        receipts = [json.loads(path.read_text()) for path in (self.root / ".aidd-gate/runs").glob("*.json")]
+        self.assertEqual(sum(r["exit_code"] == 1 for r in receipts), 4)
+
+    def test_cursor_aborted_stop_does_not_request_another_turn(self):
+        (self.root / "broken.py").write_text("def broken(:\n")
+        result = self.cli("hooks", "run", "--adapter", "cursor", "--event", "stop",
+                          input='{"status":"aborted","loop_count":0}')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+        receipt = json.loads(next((self.root / ".aidd-gate/runs").glob("*.json")).read_text())
+        self.assertEqual(receipt["exit_code"], 1)
+
+    def test_cursor_install_preserves_prompt_hooks(self):
+        directory = self.root / ".cursor"
+        directory.mkdir()
+        config = directory / "hooks.json"
+        prompt = {"type": "prompt", "prompt": "Check completion requirements.", "timeout": 10}
+        config.write_text(json.dumps({"version": 1, "hooks": {"stop": [prompt]}}))
+        for _ in range(2):
+            result = self.cli("hooks", "install")
+            self.assertEqual(result.returncode, 0, result.stderr)
+        hooks = json.loads(config.read_text())["hooks"]["stop"]
+        self.assertEqual(hooks[0], prompt)
+        self.assertEqual(len(hooks), 2)
+        self.assertEqual(self.cli("lint-config").returncode, 0)
 
     def test_install_rejects_invalid_existing_config_without_modifying_it(self):
         directory = self.root / ".cursor"
