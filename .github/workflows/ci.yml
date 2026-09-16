@@ -25,3 +25,26 @@ jobs:
             .aidd-gate/
             examples/sample/.aidd-gate/
           include-hidden-files: true
+  package:
+    needs: gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Prepare the pinned build backend
+        run: python -m pip install setuptools==79.0.1
+      - name: Build the dependency-free wheel
+        run: python -m pip wheel --no-build-isolation --no-deps . --wheel-dir dist
+      - name: Verify the installed wheel and actual Git commits offline
+        run: python scripts/release_check.py --wheel dist/aidd_gate-*.whl
+      - name: Preserve distribution and installed-package evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: package-evidence
+          path: |
+            dist/*.whl
+            .aidd-gate/releases/
+          include-hidden-files: true

@@ -30,6 +30,30 @@ creates a tiny Python sample. It preserves existing policy files. The starter
 policy checks syntax only: add project-specific checks before using it as a merge
 gate. A syntax pass is not a claim that your application works.
 
+For a Python repository, `init` can write the common static checks and your
+existing test/review commands in one step. Each command is parsed into argv and
+later runs with `shell=False`; `{python}` means the Python interpreter running
+`aidd-gate`.
+
+```sh
+aidd-gate init --profile python \
+  --source-root src --source-root tests \
+  --allow-module numpy --allow-module pytest \
+  --test-command '{python} -m pytest' \
+  --review-command '{python} scripts/review_contract.py'
+```
+
+`--source-root`, `--allow-module`, and `--review-command` can be repeated. Quote
+literal arguments that contain punctuation; shell pipelines, redirects, and
+other control operators are rejected. `init` only records commands, so it does
+not execute them. Keep credentials out of command arguments because the policy
+stores the resulting argv. Existing policies are never overwritten, and
+generation options cannot be combined with `init --sync`. Without
+`--profile python`, `init` remains the syntax-only compatibility starter.
+Generated command checks fingerprint Python files for the receipt. If a test or
+review command depends on JSON, YAML, Markdown, or another non-Python input,
+edit that check's `paths` in the policy to include those files.
+
 Run the included example, which exercises all four check types:
 
 ```sh
@@ -162,6 +186,8 @@ The [riskgate pilot](docs/PILOT_RISKGATE.md) applies the same gate to a pinned
 real repository. It checks a passing baseline and four independent faults,
 including an empty test that the upstream test runner still accepts. Its runner
 preserves the original checkout and records all gate receipts.
+The [vecdiff pilot](docs/PILOT_VECDIFF.md) adds external NumPy dependencies and
+independent numeric review contracts. Both pilots use isolated source copies.
 
 ## Trust and scope
 
@@ -193,4 +219,6 @@ Read [Plugin API](docs/PLUGIN_API.md), [roadmap](ROADMAP.md), and
 [design references](docs/REFERENCES.md). No project code was copied from prior art.
 Run focused regression tests with `python3 scripts/run_tests.py`; run the complete
 local acceptance sequence with `python3 scripts/ci.py`.
+Verify a built package and real Git-hook behavior with the [offline release
+runner](docs/RELEASE.md). See [release notes](CHANGELOG.md) for the candidate scope.
 License: [MIT](LICENSE).
