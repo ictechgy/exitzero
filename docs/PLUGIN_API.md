@@ -55,10 +55,18 @@ Verification kinds in v1:
   current Python interpreter. `options.timeout` defaults to 30 seconds.
 
 Harness registration: one `harness.config` linter compares the managed AGENTS
-section to `render_agents(policy)`, checks installed hook drift, validates JSON
-shape for explicitly listed `harness.config_files`, and reports `harness.rules`
-entries that contradict or duplicate each other. It must never read secret-like
-paths or execute config values. `harness-eval` is a CLI stub that exits 2.
+section to `render_agents(policy)`, checks installed hook drift, validates
+explicitly listed `harness.config_files`, and reports `harness.rules` entries
+that contradict or duplicate each other. It must never read secret-like paths
+or execute config values. `harness-eval` is a CLI stub that exits 2.
+
+Listed config files are linted by suffix. `.json` documents recognize Cursor
+hook entries (`command`/`prompt` fields, `version = 1` required) and Claude
+hook entries (`matcher` plus a nested `hooks` list); empty hook slots and
+`./`-relative commands that do not resolve to a file are findings.
+`mcpServers` objects are validated too. `.toml` documents must contain an
+`mcp_servers` table, which follows the same command-or-url and typed-option
+rules.
 
 The gateway and ledger packages only expose extension boundaries in v1. They
 provide no proxy, network access, PR publishing, or automatic rollback. Core emits

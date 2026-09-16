@@ -218,6 +218,129 @@ class HarnessPluginTests(unittest.TestCase):
                     findings = lint_config(make_context(root, policy))
                     self.assertTrue(any(f.path == "hooks.json" for f in findings))
 
+    def test_toml_config_files_validate_mcp_servers(self):
+        policy = {"harness": {"config_files": ["mcp.toml", "misc.toml", "broken.toml", "absent.txt"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "mcp.toml").write_text(
+                '[mcp_servers.local]\ncommand = "server"\nargs = ["--stdio"]\n\n'
+                '[mcp_servers.remote]\nurl = "https://mcp.example.test"\n',
+                encoding="utf-8",
+            )
+            (root / "misc.toml").write_text("[tool.example]\noption = true\n", encoding="utf-8")
+            (root / "broken.toml").write_text("[unclosed\n", encoding="utf-8")
+            context = make_context(root, policy)
+            with patch("exitzero_harness.render_agents", return_value=""):
+                findings = lint_config(context)
+            messages = [finding.message for finding in findings]
+            self.assertFalse(any("mcp.toml" in message for message in messages))
+            self.assertTrue(any("must contain mcp_servers" in message for message in messages))
+            self.assertTrue(any("invalid TOML" in message for message in messages))
+            self.assertTrue(any(".json or .toml" in message for message in messages))
+
+            (root / "mcp.toml").write_text(
+                '[mcp_servers.both]\ncommand = "server"\nurl = "https://mcp.example.test"\n\n'
+                '[mcp_servers.badargs]\ncommand = "server"\nargs = ["ok", 2]\n',
+                encoding="utf-8",
+            )
+            with patch("exitzero_harness.render_agents", return_value=""):
+                findings = lint_config(context)
+            messages = [finding.message for finding in findings]
+            self.assertTrue(any("exactly one" in message for message in messages))
+            self.assertTrue(any("args must be a list" in message for message in messages))
+
+    def test_claude_settings_hooks_linted_without_version(self):
+        policy = {"harness": {"config_files": [".claude/settings.json"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".claude").mkdir()
+            (root / "scripts").mkdir()
+            (root / "scripts/gate.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            settings = root / ".claude/settings.json"
+            settings.write_text(json.dumps({"hooks": {"PreToolUse": [
+                {"matcher": "Bash", "hooks": [{"type": "command", "command": "./scripts/gate.sh"}]},
+            ], "Stop": [{"hooks": [{"command": "exitzero hooks run --event stop"}]}]}}),
+                encoding="utf-8")
+            context = make_context(root, policy)
+            with patch("exitzero_harness.render_agents", return_value=""):
+                self.assertEqual(
+                    [f for f in lint_config(context) if f.path == ".claude/settings.json"], [])
+
+    def test_claude_settings_hook_defects_are_findings(self):
+        policy = {"harness": {"config_files": ["settings.json"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = root / "settings.json"
+            context = make_context(root, policy)
+
+            settings.write_text(json.dumps({"hooks": {
+                "SessionStart": [{"matcher": "startup"}],
+                "PreToolUse": [{"hooks": [{"type": "prompt", "command": "echo"}]}],
+                "PostToolUse": [{"hooks": [{"command": "./missing.sh"}]}],
+                "Stop": [],
+            }}), encoding="utf-8")
+            with patch("exitzero_harness.render_agents", return_value=""):
+                findings = lint_config(context)
+            messages = [finding.message for finding in findings]
+            self.assertTrue(any("non-empty hooks list" in message for message in messages))
+            self.assertTrue(any("type must be command" in message for message in messages))
+            self.assertTrue(any("does not exist" in message for message in messages))
+            self.assertTrue(any("has no entries" in message for message in messages))
+            self.assertFalse(any("version must be 1" in message for message in messages))
+
+    def test_cursor_entries_without_version_are_flagged(self):
+        policy = {"harness": {"config_files": ["hooks.json"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hooks = root / "hooks.json"
+            context = make_context(root, policy)
+
+            hooks.write_text(json.dumps({"hooks": {"stop": [{"command": "echo hi"}]}}),
+                             encoding="utf-8")
+            with patch("exitzero_harness.render_agents", return_value=""):
+                findings = lint_config(context)
+            self.assertTrue(any("require version 1" in f.message for f in findings))
+
+            hooks.write_text(json.dumps({"version": 1, "hooks": {"stop": [{"command": "./missing.sh"}]}}),
+                             encoding="utf-8")
+            with patch("exitzero_harness.render_agents", return_value=""):
+                findings = lint_config(context)
+            self.assertTrue(any("does not exist" in f.message for f in findings))
+
+    def test_cursor_entries_may_carry_matcher_fields(self):
+        policy = {"harness": {"config_files": ["hooks.json"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hooks = root / "hooks.json"
+            hooks.write_text(json.dumps({"version": 1, "hooks": {"stop": [
+                {"matcher": "git.*", "command": "echo ok"},
+                {"matcher": ".*", "type": "prompt", "prompt": "review the diff"},
+            ]}}), encoding="utf-8")
+            context = make_context(root, policy)
+            with patch("exitzero_harness.render_agents", return_value=""):
+                self.assertEqual(
+                    [f for f in lint_config(context) if f.path == "hooks.json"], [])
+
+    def test_shell_syntax_never_produces_missing_path_findings(self):
+        policy = {"harness": {"config_files": ["hooks.json"]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "scripts").mkdir()
+            (root / "scripts/gate.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            hooks = root / "hooks.json"
+            hooks.write_text(json.dumps({"version": 1, "hooks": {"stop": [
+                {"command": "./scripts/gate.sh; true"},
+                {"command": "./scripts/gate.sh>/dev/null"},
+                {"command": "${HOME}/scripts/gate.sh"},
+                {"command": "./scripts/gate.sh"},
+                {"command": "./scripts/absent.sh"},
+            ]}}), encoding="utf-8")
+            context = make_context(root, policy)
+            with patch("exitzero_harness.render_agents", return_value=""):
+                findings = [f for f in lint_config(context) if f.path == "hooks.json"]
+            self.assertEqual([f.message for f in findings],
+                             ["hook command path does not exist: ./scripts/absent.sh"])
+
     def test_agents_read_uses_core_safe_path_for_symlinks(self):
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside:
             root = Path(tmp)

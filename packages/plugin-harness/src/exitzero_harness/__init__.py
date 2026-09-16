@@ -7,6 +7,9 @@ MCP, or rule values.
 from __future__ import annotations
 
 import json
+import re
+import shlex
+import tomllib
 from typing import Any
 
 from exitzero.api import API_VERSION, Context, Finding
@@ -17,6 +20,24 @@ from exitzero.policy import BEGIN, END, render_agents
 
 _HARNESS_FIELDS = frozenset({"config_files", "rules"})
 _RULE_FIELDS = frozenset({"id", "value"})
+_CLAUDE_ENTRY_FIELDS = frozenset({"matcher", "hooks", "disabled"})
+_CLAUDE_ITEM_FIELDS = frozenset({"type", "command", "timeout"})
+_CURSOR_EXECUTION_FIELDS = frozenset({"command", "prompt", "type"})
+_LITERAL_COMMAND_PATH = re.compile(r"\./[A-Za-z0-9_./-]+\Z")
+
+
+def _is_claude_entry(entry: Any) -> bool:
+    """Detect Claude entries without stealing Cursor entries that carry extra fields.
+
+    A Claude entry owns a nested ``hooks`` list.  A bare ``matcher`` without any
+    execution field is also Claude-shaped so a malformed entry still reports its
+    missing ``hooks`` list instead of a misleading Cursor complaint.
+    """
+
+    return isinstance(entry, dict) and (
+        "hooks" in entry
+        or ("matcher" in entry and not _CURSOR_EXECUTION_FIELDS & set(entry))
+    )
 
 
 def register(registry: Any) -> None:
@@ -123,10 +144,13 @@ def _lint_harness_settings(context: Context) -> list[Finding]:
         findings.append(Finding("harness.config", "harness.config_files must be a list of strings"))
         config_files = []
     for relative in config_files:
-        if not relative.lower().endswith(".json"):
-            findings.append(Finding("harness.config", f"config file must be a JSON filename: {relative}", relative))
-            continue
-        findings.extend(_lint_json_config(context, relative))
+        suffix = relative.lower().rsplit(".", 1)[-1]
+        if suffix == "json":
+            findings.extend(_lint_json_config(context, relative))
+        elif suffix == "toml":
+            findings.extend(_lint_toml_config(context, relative))
+        else:
+            findings.append(Finding("harness.config", f"config file must be a .json or .toml filename: {relative}", relative))
 
     rules = harness.get("rules", [])
     if not isinstance(rules, list):
@@ -185,59 +209,154 @@ def _lint_json_config(context: Context, relative: str) -> list[Finding]:
         raise ValueError("Cannot read harness config") from exc
     except json.JSONDecodeError as exc:
         return [Finding("harness.config", f"config file has invalid JSON: {relative}", relative, exc.lineno)]
-    return _validate_config_shape(document, relative)
+    return _validate_config_shape(context, document, relative)
 
 
-def _validate_config_shape(document: Any, relative: str) -> list[Finding]:
+def _validate_config_shape(context: Context, document: Any, relative: str) -> list[Finding]:
     if not isinstance(document, dict):
         return [Finding("harness.config", f"config file must be an object: {relative}", relative)]
     findings: list[Finding] = []
     recognized = False
     if "hooks" in document:
         recognized = True
-        if type(document.get("version")) is not int or document["version"] != 1:
-            findings.append(Finding("harness.config", f"Cursor hooks version must be 1: {relative}", relative))
-        hooks = document["hooks"]
-        if not isinstance(hooks, dict):
-            findings.append(Finding("harness.config", f"Cursor hooks must be an object: {relative}", relative))
-        else:
-            for slot, entries in hooks.items():
-                if not isinstance(slot, str) or not isinstance(entries, list):
-                    findings.append(Finding("harness.config", f"Cursor hook entries must be lists: {relative}", relative))
-                    continue
-                for entry in entries:
-                    error = cursor_hook_error(entry)
-                    if error:
-                        findings.append(Finding("harness.config", error, relative))
+        findings.extend(_lint_hooks_document(context, document, relative))
     if "mcpServers" in document:
         recognized = True
-        servers = document["mcpServers"]
-        if not isinstance(servers, dict):
-            findings.append(Finding("harness.config", f"MCP mcpServers must be an object: {relative}", relative))
-        else:
-            for name, server in servers.items():
-                if not isinstance(name, str) or not name.strip() or not isinstance(server, dict):
-                    findings.append(Finding("harness.config", f"MCP server entries must be objects: {relative}", relative))
-                    continue
-                has_command = isinstance(server.get("command"), str) and bool(server["command"].strip())
-                has_url = isinstance(server.get("url"), str) and bool(server["url"].strip())
-                if has_command == has_url:
-                    findings.append(Finding("harness.config", f"MCP server requires exactly one non-empty command or url: {relative}", relative))
-                for key in ("command", "url"):
-                    if key in server and (not isinstance(server[key], str) or not server[key].strip()):
-                        findings.append(Finding("harness.config", f"MCP {key} must be a non-empty string: {relative}", relative))
-                if "args" in server and (
-                    not isinstance(server["args"], list)
-                    or any(not isinstance(arg, str) for arg in server["args"])
-                ):
-                    findings.append(Finding("harness.config", f"MCP args must be a list of strings: {relative}", relative))
-                if "env" in server and (not isinstance(server["env"], dict) or any(
-                    not isinstance(key, str) or not isinstance(value, str)
-                    for key, value in server["env"].items()
-                )):
-                    findings.append(Finding("harness.config", f"MCP env must be a string map: {relative}", relative))
+        findings.extend(_validate_mcp_servers(document["mcpServers"], relative))
     if not recognized:
-        findings.append(Finding("harness.config", f"config file must contain Cursor hooks or MCP mcpServers: {relative}", relative))
+        findings.append(Finding("harness.config", f"config file must contain hooks or MCP servers: {relative}", relative))
+    return findings
+
+
+def _lint_hooks_document(context: Context, document: dict, relative: str) -> list[Finding]:
+    """Lint Cursor and Claude hook documents without executing any values.
+
+    Cursor hook entries carry ``command``/``prompt`` fields; Claude entries carry
+    ``matcher`` plus a nested ``hooks`` list.  The entry shape selects the format,
+    so one linter covers ``.cursor/hooks.json`` and ``.claude/settings.json``.
+    """
+
+    findings: list[Finding] = []
+    hooks = document["hooks"]
+    if not isinstance(hooks, dict):
+        return [Finding("harness.config", f"hooks must be an object: {relative}", relative)]
+    cursor_entries = False
+    for slot, entries in hooks.items():
+        if not isinstance(slot, str) or not isinstance(entries, list):
+            findings.append(Finding("harness.config", f"hook entries must be lists: {relative}", relative))
+            continue
+        if not entries:
+            findings.append(Finding("harness.config", f"hook slot {slot!r} has no entries: {relative}", relative))
+            continue
+        for entry in entries:
+            if _is_claude_entry(entry):
+                findings.extend(_lint_claude_hook_entry(context, entry, relative))
+            else:
+                cursor_entries = True
+                error = cursor_hook_error(entry)
+                if error:
+                    findings.append(Finding("harness.config", error, relative))
+                elif isinstance(entry.get("command"), str):
+                    findings.extend(_command_path_findings(context, entry["command"], relative))
+    version = document.get("version")
+    if "version" in document and (type(version) is not int or version != 1):
+        findings.append(Finding("harness.config", f"Cursor hooks version must be 1: {relative}", relative))
+    elif cursor_entries and "version" not in document:
+        findings.append(Finding("harness.config", f"Cursor hook entries require version 1: {relative}", relative))
+    return findings
+
+
+def _lint_claude_hook_entry(context: Context, entry: dict, relative: str) -> list[Finding]:
+    findings: list[Finding] = []
+    for field in sorted(set(entry) - _CLAUDE_ENTRY_FIELDS):
+        findings.append(Finding("harness.config", f"unknown field in Claude hook entry: {field}", relative))
+    if "matcher" in entry and not isinstance(entry["matcher"], str):
+        findings.append(Finding("harness.config", f"Claude hook matcher must be a string: {relative}", relative))
+    items = entry.get("hooks")
+    if not isinstance(items, list) or not items:
+        findings.append(Finding("harness.config", f"Claude hook entries require a non-empty hooks list: {relative}", relative))
+        return findings
+    for item in items:
+        if not isinstance(item, dict):
+            findings.append(Finding("harness.config", f"Claude hook items must be objects: {relative}", relative))
+            continue
+        for field in sorted(set(item) - _CLAUDE_ITEM_FIELDS):
+            findings.append(Finding("harness.config", f"unknown field in Claude hook item: {field}", relative))
+        if item.get("type", "command") != "command":
+            findings.append(Finding("harness.config", f"Claude hook item type must be command: {relative}", relative))
+        if not isinstance(item.get("command"), str) or not item["command"].strip():
+            findings.append(Finding("harness.config", f"Claude hook items require a non-empty command: {relative}", relative))
+        else:
+            findings.extend(_command_path_findings(context, item["command"], relative))
+    return findings
+
+
+def _command_path_findings(context: Context, command: str, relative: str) -> list[Finding]:
+    """Check that an explicitly repo-relative hook command points at a real file."""
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+    # Only a plainly literal "./path" token is checked; shell operators,
+    # expansions or punctuation make the token something else entirely.
+    if not tokens or not _LITERAL_COMMAND_PATH.fullmatch(tokens[0]):
+        return []
+    try:
+        target = safe_path(context.root, tokens[0][2:])
+    except (OSError, ValueError, TypeError):
+        return [Finding("harness.config", f"hook command path is not allowed: {tokens[0]}", relative)]
+    if not target.is_file():
+        return [Finding("harness.config", f"hook command path does not exist: {tokens[0]}", relative)]
+    return []
+
+
+def _validate_mcp_servers(servers: Any, relative: str) -> list[Finding]:
+    if not isinstance(servers, dict):
+        return [Finding("harness.config", f"MCP servers must be an object: {relative}", relative)]
+    findings: list[Finding] = []
+    for name, server in servers.items():
+        if not isinstance(name, str) or not name.strip() or not isinstance(server, dict):
+            findings.append(Finding("harness.config", f"MCP server entries must be objects: {relative}", relative))
+            continue
+        has_command = isinstance(server.get("command"), str) and bool(server["command"].strip())
+        has_url = isinstance(server.get("url"), str) and bool(server["url"].strip())
+        if has_command == has_url:
+            findings.append(Finding("harness.config", f"MCP server requires exactly one non-empty command or url: {relative}", relative))
+        for key in ("command", "url"):
+            if key in server and (not isinstance(server[key], str) or not server[key].strip()):
+                findings.append(Finding("harness.config", f"MCP {key} must be a non-empty string: {relative}", relative))
+        if "args" in server and (
+            not isinstance(server["args"], list)
+            or any(not isinstance(arg, str) for arg in server["args"])
+        ):
+            findings.append(Finding("harness.config", f"MCP args must be a list of strings: {relative}", relative))
+        if "env" in server and (not isinstance(server["env"], dict) or any(
+            not isinstance(key, str) or not isinstance(value, str)
+            for key, value in server["env"].items()
+        )):
+            findings.append(Finding("harness.config", f"MCP env must be a string map: {relative}", relative))
+    return findings
+
+
+def _lint_toml_config(context: Context, relative: str) -> list[Finding]:
+    try:
+        path = safe_path(context.root, relative)
+    except (OSError, ValueError, TypeError):
+        return [Finding("harness.config", f"config file is not allowed: {relative}", relative)]
+    if not path.is_file():
+        return [Finding("harness.config", f"config file does not exist: {relative}", relative)]
+    try:
+        document = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError) as exc:
+        raise ValueError("Cannot read harness config") from exc
+    except tomllib.TOMLDecodeError:
+        return [Finding("harness.config", f"config file has invalid TOML: {relative}", relative)]
+    findings: list[Finding] = []
+    if "mcp_servers" in document:
+        findings.extend(_validate_mcp_servers(document["mcp_servers"], relative))
+    else:
+        findings.append(Finding("harness.config", f"TOML config file must contain mcp_servers: {relative}", relative))
     return findings
 
 
