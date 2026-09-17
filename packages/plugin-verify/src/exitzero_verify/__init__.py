@@ -35,7 +35,7 @@ def _files(context: Context, spec: CheckSpec) -> list[Path]:
     """Use core's guarded selector, with a small bootstrap fallback.
 
     The fallback keeps the plugin importable while the core package is being
-    assembled.  Once ``exitzero.files`` is present, all path safety remains
+    assembled.  Once ``exitzero.services`` is present, all path safety remains
     owned by core as specified by the plugin contract.
     """
 
@@ -44,7 +44,7 @@ def _files(context: Context, spec: CheckSpec) -> list[Path]:
         raise ValueError("check paths must be a non-empty sequence of non-empty strings")
     if not patterns:
         raise ValueError(f"check {spec.id!r} selected no files")
-    from exitzero.files import select_files
+    from exitzero.services import select_files
 
     selected = select_files(context.root, patterns)
     if not selected:
@@ -119,7 +119,7 @@ def _validate_import_options(options: dict[str, Any]) -> tuple[list[str], list[s
 
 def _module_index(root: Path, roots: list[str]) -> dict[str, Path]:
     index: dict[str, Path] = {}
-    from exitzero.files import safe_path, select_files
+    from exitzero.services import safe_path, select_files
 
     for root_name in roots:
         base = safe_path(root, root_name)
@@ -334,6 +334,15 @@ def check_imports(context: Context, spec: CheckSpec) -> list[Finding]:
         index_prefixes.update(".".join(parts[:end]) for end in range(1, len(parts)))
     allowed = set(allow_modules)
     findings: list[Finding] = []
+    symbols_cache: dict[Path, set[str]] = {}
+
+    def _symbols_of(path: Path) -> set[str]:
+        # Each importing file used to re-parse the same target module; cache
+        # symbol sets for the duration of this run so parsing is per-module.
+        if path not in symbols_cache:
+            symbols_cache[path] = _module_symbols(path)
+        return symbols_cache[path]
+
     for path in _files(context, spec):
         tree, syntax_finding = _parse(path, context.root, spec.id)
         if syntax_finding is not None:
@@ -374,7 +383,7 @@ def check_imports(context: Context, spec: CheckSpec) -> list[Finding]:
                 if guard >= _GUARD_IMPORT:
                     continue
                 if local_path is not None:
-                    symbols = _module_symbols(local_path)
+                    symbols = _symbols_of(local_path)
                     for alias in node.names:
                         if alias.name == "*":
                             continue
@@ -403,7 +412,7 @@ def check_imports(context: Context, spec: CheckSpec) -> list[Finding]:
                 if child in index:
                     module = child
                     continue
-                if attr in _module_symbols(index[module]):
+                if attr in _symbols_of(index[module]):
                     break
                 findings.append(Finding(spec.id, f"Module attribute {module}.{attr} cannot be resolved", _relative(context.root, path), node.lineno))
                 break

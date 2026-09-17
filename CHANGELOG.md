@@ -1,5 +1,42 @@
 # Changelog
 
+## Unreleased
+
+Security and reliability hardening from a three-track review of the gateway,
+ledger, core and plugins:
+
+- `mcp-gateway`: a non-zero or killed upstream now exits 2 instead of 0;
+  the config is hashed and parsed from one byte snapshot; JSON-RPC frames
+  are bounded at 4 MiB and outstanding client requests at 1024; duplicate
+  and null request ids are handled without evicting in-flight entries;
+  workers are joined on shutdown, client writes are serialized, and a
+  failed first audit write can no longer leak the upstream process.
+- `ledger-publish`: the PR body is piped to `gh` over stdin instead of a
+  re-opened repository path; `--base` validation disables partial-clone
+  lazy fetch; receipts are trimmed to the fields aggregation needs;
+  hostile finding paths (NUL, control characters) are rejected before
+  they reach `git` argv or the Markdown body, and commit lookups batch
+  under the argv limit.
+- Core: `exitzero.toml`, `.exitzero/hooks.json` and ledger receipts must be
+  regular files (FIFOs can no longer block a gate); `init --sync`, hook
+  installation and manifest writes are atomic renames, which also prevents
+  hard-link write-through; pre-commit Git probes have timeouts; deeply
+  nested Cursor hook JSON exits 2 with a receipt instead of crashing; hook
+  launchers use `python -P -m exitzero` so a repository's own `exitzero/`
+  directory cannot shadow the installed package; human output escapes
+  control characters in finding paths and messages.
+- Performance: `select_files` walks with `os.walk`, pruning excluded and
+  credential directories before descent instead of globbing the whole
+  tree; input hashing streams in 1 MiB chunks; `python.imports` parses each
+  local module once per run; harness rule lint and eval reports no longer
+  retain unbounded per-turn data.
+- Plugin contract: `exitzero.services` is the documented import surface
+  (path safety, managed-section rendering, gate execution); plugins declare
+  their own `API_VERSION` literal.
+- `scripts/run_fixtures.py` accepts `--timeout SECONDS` (default 120, above
+  the 60-second command budget) and kills the whole process group on
+  timeout so a hung command check cannot leave children behind.
+
 ## 0.2.0 — released 2026-09-16
 
 **Roadmap tail**

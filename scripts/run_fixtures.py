@@ -24,8 +24,11 @@ counted separately from passes and failures.
 from __future__ import annotations
 
 import json
+import math
+import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -37,6 +40,9 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "fixtures"
 CLI = ROOT / "bin" / "exitzero"
+# Must exceed the largest budget a fixture policy grants a command check
+# (60s) plus check/test overhead, or a legitimate run is cut short.
+TIMEOUT = 120.0
 
 MANIFEST_SCHEMA_VERSION = 1
 _MANIFEST_FIELDS = frozenset({"schema_version", "description", "skip", "expect"})
@@ -95,21 +101,76 @@ def load_manifest(directory: Path) -> dict[str, Any]:
     return case
 
 
-def invoke(root: Path, command: str) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
-    process = subprocess.run(
+def _descendants(pid: int) -> list[int]:
+    """Best-effort process-tree listing via ps; empty when ps is unavailable.
+
+    Must be called before the root process is killed — orphans reparent to
+    init and become invisible to a parent map afterwards.
+    """
+    try:
+        result = subprocess.run(["ps", "-axo", "pid=,ppid="],
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    children: dict[int, list[int]] = {}
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            continue
+        try:
+            child, parent = int(fields[0]), int(fields[1])
+        except ValueError:
+            continue
+        children.setdefault(parent, []).append(child)
+    found: list[int] = []
+    stack = [pid]
+    while stack:
+        for child in children.get(stack.pop(), []):
+            found.append(child)
+            stack.append(child)
+    return found
+
+
+def invoke(root: Path, command: str, timeout: float = TIMEOUT) -> tuple[subprocess.CompletedProcess[str], dict[str, Any]]:
+    process = subprocess.Popen(
         [sys.executable, str(CLI), "--root", str(root), command, "--format", "json"],
         cwd=ROOT,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
-        timeout=30,
+        start_new_session=True,
     )
     try:
-        payload = json.loads(process.stdout)
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Command checks run under start_new_session, so they escape the
+        # gate's process group: snapshot the tree first, kill the gate's
+        # group, then kill each straggler's own group.
+        descendants = _descendants(process.pid)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (AttributeError, OSError):
+            process.kill()
+        for descendant in descendants:
+            try:
+                os.killpg(descendant, signal.SIGKILL)
+            except OSError:
+                try:
+                    os.kill(descendant, signal.SIGKILL)
+                except OSError:
+                    pass
+        process.communicate()
+        raise
+    completed = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
+    try:
+        payload = json.loads(completed.stdout)
     except json.JSONDecodeError as error:
-        return process, {"_json_error": f"{type(error).__name__}: {error}"}
+        return completed, {"_json_error": f"{type(error).__name__}: {error}"}
     if not isinstance(payload, dict):
-        return process, {"_json_error": f"{command} JSON output is not an object"}
-    return process, payload
+        return completed, {"_json_error": f"{command} JSON output is not an object"}
+    return completed, payload
 
 
 def safe_output_path(relative: str) -> Path:
@@ -198,7 +259,7 @@ def verify_run(
     return evidence
 
 
-def run_case(case: dict[str, Any]) -> dict[str, Any]:
+def run_case(case: dict[str, Any], timeout: float = TIMEOUT) -> dict[str, Any]:
     name = str(case["name"])
     source = FIXTURES / name
     if not source.is_dir():
@@ -206,7 +267,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix=f"exitzero-{name}-") as temporary:
         temporary_root = Path(temporary)
         shutil.copytree(source, temporary_root, dirs_exist_ok=True)
-        check_process, check_payload = invoke(temporary_root, "check")
+        check_process, check_payload = invoke(temporary_root, "check", timeout)
         check_evidence = verify_run(
             check_process,
             check_payload,
@@ -216,7 +277,7 @@ def run_case(case: dict[str, Any]) -> dict[str, Any]:
             temporary_root,
             name,
         )
-        lint_process, lint_payload = invoke(temporary_root, "lint-config")
+        lint_process, lint_payload = invoke(temporary_root, "lint-config", timeout)
         lint_evidence = verify_run(
             lint_process,
             lint_payload,
@@ -250,7 +311,27 @@ def discover_cases() -> list[dict[str, Any]]:
     return cases
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    timeout = TIMEOUT
+    index = 0
+    while index < len(args):
+        argument = args[index]
+        if argument == "--timeout" and index + 1 < len(args):
+            raw, index = args[index + 1], index + 2
+        elif argument.startswith("--timeout="):
+            raw, index = argument.split("=", 1)[1], index + 1
+        else:
+            print(f"unknown argument: {argument}", file=sys.stderr)
+            return 2
+        try:
+            timeout = float(raw)
+        except ValueError:
+            print("--timeout requires seconds", file=sys.stderr)
+            return 2
+    if timeout <= 0 or not math.isfinite(timeout):
+        print("--timeout must be a positive finite number", file=sys.stderr)
+        return 2
     prepare_outputs()
     results: list[dict[str, Any]] = []
     for case in discover_cases():
@@ -264,7 +345,7 @@ def main() -> int:
             print(f"{name}: SKIP ({case['skip']})")
             continue
         try:
-            result = run_case(case)
+            result = run_case(case, timeout)
         except (AssertionError, OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError) as error:
             result = {"name": name, "status": "FAIL", "error": f"{type(error).__name__}: {error}"}
         results.append(result)

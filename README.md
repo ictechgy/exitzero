@@ -253,6 +253,19 @@ automatically so drift is detectable. Do not include credential files.
 Known credential-like paths and symlink targets are rejected. Path filtering
 is not a universal secret detector.
 
+Receipts and gateway audit logs are local evidence only: anyone with write
+access to `.exitzero/` can rewrite them; they are not signed or
+tamper-proof. Files are validated before use, but a narrow
+check-then-act window remains — policy reads, `init --sync` and hook
+installation write through atomic renames and reject symlinks and
+non-regular files, yet an adversary racing the filesystem inside the
+checkout can still defeat per-path checks. Run the gate on a checkout you
+control. The hook launcher runs `python -P -m exitzero` so a repository's
+own `exitzero/` directory cannot shadow the installed package. The MCP
+gateway bounds each JSON-RPC frame to 4 MiB and outstanding client
+requests to 1024; a hostile or crashed upstream ends the session with
+exit 2 rather than silently dropping traffic.
+
 There is no cloud service, model hosting, model training, full agent
 evaluation or automatic rollback. The MCP gateway stays a local stdio proxy;
 `ledger-publish` writes to GitHub only through an explicit `--pr` flag.

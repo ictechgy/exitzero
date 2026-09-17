@@ -38,12 +38,18 @@ registered configuration linters before verification checks. `lint-config` runs
 linters without executing check commands. Hook slots use the same policy and
 runner; extra plugin handlers run after its checks.
 
-Shared helpers: `exitzero.files.select_files(root, patterns)` returns sorted,
-deduplicated repository files; it rejects absolute paths, traversal, symlinks and
-secret-like paths. `exitzero.policy.render_agents(policy)` returns the complete
-managed section, with `<!-- exitzero:begin -->` and `<!-- exitzero:end -->`.
-Plugins should validate their own `spec.options` and raise `ValueError` on invalid
-settings. Invalid settings must never silently disable a check.
+Shared helpers: plugins may import `exitzero.api` and `exitzero.services`;
+every other core module is internal and outside the `API_VERSION` contract.
+`exitzero.services.select_files(root, patterns)` returns sorted, deduplicated
+repository files; it rejects absolute paths, traversal, symlinks and
+secret-like paths. `exitzero.services.render_agents(policy)` returns the
+complete managed section, with `<!-- exitzero:begin -->` and
+`<!-- exitzero:end -->`; `run_gate(root, policy_name, command)` executes one
+gate run (used by the harness eval replayer). A plugin declares the contract
+it was written against with its own `API_VERSION = 1` literal — it must not
+re-export core's, which could advertise a contract it never verified.
+Plugins should validate their own `spec.options` and raise `ValueError` on
+invalid settings. Invalid settings must never silently disable a check.
 
 Verification kinds in v1:
 
