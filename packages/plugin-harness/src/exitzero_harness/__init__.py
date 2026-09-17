@@ -19,12 +19,11 @@ import tomllib
 from typing import Any
 import uuid
 
-from exitzero.runner import run
+from exitzero.api import Context, Finding
+from exitzero.services import (BEGIN, END, cursor_hook_error, lint_installed,
+                               render_agents, run_gate, safe_path)
 
-from exitzero.api import API_VERSION, Context, Finding
-from exitzero.files import safe_path
-from exitzero.hooks import cursor_hook_error, lint_installed
-from exitzero.policy import BEGIN, END, render_agents
+API_VERSION = 1
 
 
 _HARNESS_FIELDS = frozenset({"config_files", "rules"})
@@ -319,7 +318,7 @@ def _execute_scenario(context: Context, container: Path, directory: Path) -> dic
             for turn in turns:
                 _apply_deletes(turn, temporary_root)
                 _apply_turn(Path(turns_dir) / turn["name"], temporary_root)
-                receipt = run(temporary_root, policy_name, "check")
+                receipt = run_gate(temporary_root, policy_name, "check")
                 if receipt.get("receipt") is None:
                     raise _EvalOperationalError(
                         f"turn {turn['name']} could not persist its gate receipt")
@@ -336,7 +335,9 @@ def _execute_scenario(context: Context, container: Path, directory: Path) -> dic
                     "expected_exit": turn["exit"],
                     "rules": rules,
                     "expected_rules": expected,
-                    "receipt": receipt,
+                    # Drop the per-file input hash map — it dominates memory on
+                    # large trees; findings, ids and timing remain as evidence.
+                    "receipt": {key: value for key, value in receipt.items() if key != "inputs"},
                 }
                 if "note" in turn:
                     entry["note"] = turn["note"]
@@ -462,7 +463,7 @@ def _lint_harness_settings(context: Context) -> list[Finding]:
 
 def _lint_rules(rules: list[Any]) -> list[Finding]:
     findings: list[Finding] = []
-    seen: dict[str, list[Any]] = {}
+    seen: dict[str, set[Any]] = {}
     for index, rule in enumerate(rules):
         if not isinstance(rule, dict):
             findings.append(Finding("harness.rules", f"harness.rules[{index}] must be a table"))
@@ -482,16 +483,15 @@ def _lint_rules(rules: list[Any]) -> list[Finding]:
             findings.append(Finding("harness.rules", f"harness.rules[{index}].value must be a string"))
             continue
         rule_id = rule["id"]
-        if rule_id in seen:
-            if rule["value"] not in seen[rule_id]:
+        values = seen.setdefault(rule_id, set())
+        if values:
+            if rule["value"] in values:
+                findings.append(Finding("harness.rules", f"harness rule {rule_id!r} is duplicated"))
+            else:
                 findings.append(
                     Finding("harness.rules", f"harness rule {rule_id!r} has conflicting values")
                 )
-            else:
-                findings.append(Finding("harness.rules", f"harness rule {rule_id!r} is duplicated"))
-            seen[rule_id].append(rule["value"])
-        else:
-            seen[rule_id] = [rule["value"]]
+        values.add(rule["value"])
     return findings
 
 

@@ -1,7 +1,9 @@
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -109,7 +111,7 @@ rules = []
 
             runner.ROOT = tmp_root
             runner.FIXTURES = fixtures
-            runner.run_case = lambda case: {"name": case["name"], "status": "PASS"}
+            runner.run_case = lambda case, timeout=120.0: {"name": case["name"], "status": "PASS"}
 
             self.assertEqual(runner.main(), 1)
             summary = json.loads((tmp_root / ".exitzero" / "fixture-results.json").read_text())
@@ -124,6 +126,36 @@ rules = []
             runner.FIXTURES = tmp_root / "only-skip"
             write_manifest(runner.FIXTURES / "skip-case", 'schema_version = 1\nskip = "needs a human"\n')
             self.assertEqual(runner.main(), 0)
+
+
+class TimeoutTests(unittest.TestCase):
+    def test_non_finite_timeout_is_rejected(self):
+        # nan/inf slip past a bare `timeout <= 0` check and would make
+        # communicate() raise ValueError or wait forever.
+        self.assertEqual(runner.main(["--timeout", "nan"]), 2)
+        self.assertEqual(runner.main(["--timeout", "inf"]), 2)
+        self.assertEqual(runner.main(["--timeout", "-1"]), 2)
+
+    def test_timeout_kills_descendants_outside_the_gate_process_group(self):
+        # Command checks start their own session, so a group kill on the gate
+        # alone would orphan them; the sweep must find and kill them.
+        runner.ROOT = ROOT  # earlier tests repoint the module-level repo root
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            marker = "ez-orphan-marker-7f3a"
+            (root / "exitzero.toml").write_text(
+                'version = 1\nplugins = ["exitzero_verify"]\n'
+                '[[checks]]\nid = "hang"\nkind = "command"\npaths = ["*.py"]\n'
+                '[checks.options]\n'
+                f'argv = ["{sys.executable}", "-c", "import time; time.sleep(60) # {marker}"]\n'
+                'timeout = 300\n', encoding="utf-8")
+            with self.assertRaises(subprocess.TimeoutExpired):
+                runner.invoke(root, "check", timeout=2)
+            time.sleep(0.5)
+            found = subprocess.run(["pgrep", "-f", marker],
+                                   capture_output=True, text=True)
+            self.assertNotEqual(found.returncode, 0,
+                                f"orphaned command check survived: {found.stdout}")
 
 
 if __name__ == "__main__":

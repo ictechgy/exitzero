@@ -13,7 +13,7 @@ sys.path.insert(0, str(ROOT / "packages" / "core" / "src"))
 sys.path.insert(0, str(ROOT / "packages" / "plugin-ledger" / "src"))
 
 from exitzero.api import Context  # noqa: E402
-from exitzero_ledger import ledger_publish  # noqa: E402
+from exitzero_ledger import _load_receipts, ledger_publish  # noqa: E402
 
 
 def make_context(root: Path) -> Context:
@@ -192,6 +192,140 @@ class LedgerPublishTests(unittest.TestCase):
             empty.mkdir()
             with mock.patch.dict(os.environ, {"PATH": str(empty)}):
                 self.assertEqual(ledger_publish(make_context(root), ["--pr", "7"]), 2)
+
+
+class LedgerSecurityRegressionTests(unittest.TestCase):
+    """Review findings: hostile receipt content, argv batching, body piping."""
+
+    def test_nul_and_control_finding_paths_do_not_crash(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_receipt(root, "f1", status="failed", findings=[
+                {"rule": "r", "path": "a\x00b.py", "message": "x"},
+                {"rule": "r", "path": "tab\ty.py", "message": "x"},
+                {"rule": "r", "path": "ok.py", "message": "x"},
+            ])
+            self.assertEqual(ledger_publish(make_context(root), []), 0)
+            paths = [e["path"] for e in latest_record(root)["rollback_hints"]["implicated_paths"]]
+            self.assertEqual(paths, ["ok.py"])
+
+    def test_markdown_body_escapes_receipt_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_receipt(root, "f1", status="failed", findings=[
+                {"rule": "syntax`bad", "path": "x`evil`.py", "message": "x"},
+            ])
+            self.assertEqual(ledger_publish(make_context(root), []), 0)
+            body = next((root / ".exitzero" / "ledger").glob("record-*.md")).read_text()
+            # A backslash is literal inside a code span, so the fence itself
+            # must grow past the embedded backtick run.
+            self.assertIn("``x`evil`.py``", body)
+            self.assertNotIn("`x`evil`.py` ", body)
+
+    def test_base_validation_disables_lazy_fetch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_receipt(root, "aaa")
+            marker = root / "git-env.txt"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            stub = bin_dir / "git"
+            stub.write_text(
+                f'#!/bin/sh\nprintf "%s" "$GIT_NO_LAZY_FETCH" > "{marker}"\nprintf "0123456789abcdef\\n"\n',
+                encoding="utf-8")
+            stub.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": f"{bin_dir}:{os.environ['PATH']}"}):
+                self.assertEqual(ledger_publish(make_context(root), ["--base", "main"]), 0)
+            self.assertEqual(marker.read_text(), "1")
+
+    def test_gh_reads_the_body_from_stdin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            write_receipt(root, "aaa")
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            argv_marker = root / "gh-argv.txt"
+            body_marker = root / "gh-body.txt"
+            stub = bin_dir / "gh"
+            stub.write_text(
+                f'#!/bin/sh\nprintf "%s\\n" "$@" > "{argv_marker}"\ncat > "{body_marker}"\n',
+                encoding="utf-8")
+            stub.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": f"{bin_dir}:{os.environ['PATH']}"}):
+                self.assertEqual(ledger_publish(make_context(root), ["--pr", "9"]), 0)
+            args = argv_marker.read_text().splitlines()
+            self.assertEqual(args[3:], ["--body-file", "-"])
+            record_body = next((root / ".exitzero" / "ledger").glob("record-*.md")).read_text()
+            self.assertEqual(body_marker.read_text(), record_body)
+
+    def test_many_implicated_paths_batch_git_invocations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            findings = [{"rule": "r", "path": f"p{i}.py", "message": "x"}
+                        for i in range(300)]
+            write_receipt(root, "f1", status="failed", findings=findings)
+            count = root / "git-calls.txt"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            stub = bin_dir / "git"
+            stub.write_text(f'#!/bin/sh\necho call >> "{count}"\n', encoding="utf-8")
+            stub.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": f"{bin_dir}:{os.environ['PATH']}"}):
+                self.assertEqual(ledger_publish(make_context(root), []), 0)
+            self.assertGreaterEqual(len(count.read_text().splitlines()), 2)
+
+    def test_suspect_commits_keep_global_recency_across_batches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            findings = [{"rule": "r", "path": f"p{i}.py", "message": "x"}
+                        for i in range(300)]
+            write_receipt(root, "f1", status="failed", findings=findings)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            stub = bin_dir / "git"
+            # The newest commit only touches a path in the second batch; a
+            # concatenated-then-truncated list would drop it, so the merge
+            # must sort by committer date across batches.
+            stub.write_text("""#!/usr/bin/env python3
+import sys
+paths = [a for a in sys.argv[1:] if a.startswith(":(literal)")]
+if any(a.endswith("p299.py") for a in paths):
+    sys.stdout.write("f" * 40 + "\\x002099-01-01T00:00:00+00:00\\x00newest\\n")
+else:
+    for i in range(20):
+        sys.stdout.write("%040d\\x002020-01-01T00:00:00+00:00\\x00old-%d\\n" % (i, i))
+""", encoding="utf-8")
+            stub.chmod(0o755)
+            with mock.patch.dict(os.environ, {"PATH": f"{bin_dir}:{os.environ['PATH']}"}):
+                self.assertEqual(ledger_publish(make_context(root), []), 0)
+            commits = latest_record(root)["rollback_hints"]["suspect_commits"]
+            self.assertEqual(commits[0]["subject"], "newest")
+            self.assertEqual(commits[0]["sha"], "f" * 12)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs need POSIX mkfifo")
+    def test_fifo_receipt_is_corrupt_not_blocking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".exitzero" / "runs").mkdir(parents=True)
+            os.mkfifo(root / ".exitzero" / "runs" / "pipe.json")
+            self.assertEqual(ledger_publish(make_context(root), []), 0)
+            self.assertIn("pipe.json", latest_record(root)["corrupt_receipts"])
+
+    def test_loaded_receipts_drop_the_inputs_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runs = root / ".exitzero" / "runs"
+            runs.mkdir(parents=True)
+            receipt = {"schema_version": 1, "run_id": "r1", "command": "check",
+                       "status": "passed", "started_at": "2026-09-16T00:00:00+00:00",
+                       "findings": [], "inputs": {f"f{i}.py": "x" * 64 for i in range(500)}}
+            (runs / "r1.json").write_text(json.dumps(receipt), encoding="utf-8")
+            receipts, corrupt = _load_receipts(root, None)
+            self.assertFalse(corrupt)
+            self.assertNotIn("inputs", receipts[0])
+            self.assertEqual(receipts[0]["command"], "check")
 
 
 if __name__ == "__main__":

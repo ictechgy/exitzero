@@ -5,6 +5,8 @@ notifications are ignored. Each executed tools/call appends the tool name to
 ``called-tools.txt`` in the working directory so tests can prove which calls
 actually reached the server. ``FAKE_DIE_AFTER`` env var exits the process
 with code 7 after that many messages, simulating a mid-session crash.
+``FAKE_EXIT_CODE`` changes the code returned when the client closes stdin.
+``FAKE_BIG_LINE`` makes every response carry that many bytes of padding.
 """
 import json
 import os
@@ -13,6 +15,9 @@ import sys
 
 def main() -> int:
     die_after = os.environ.get("FAKE_DIE_AFTER")
+    exit_code = int(os.environ.get("FAKE_EXIT_CODE", "0"))
+    big_line = int(os.environ.get("FAKE_BIG_LINE", "0"))
+    padding = "x" * big_line
     seen = 0
     for line in sys.stdin:
         seen += 1
@@ -36,10 +41,12 @@ def main() -> int:
             result = {"content": [{"type": "text", "text": f"ran {name}"}]}
         else:
             result = {}
+        if padding:
+            result = {"result": result, "padding": padding}
         sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": message["id"],
                                      "result": result}) + "\n")
         sys.stdout.flush()
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

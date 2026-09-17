@@ -1,7 +1,6 @@
 """One runner for CLI, CI and local hook adapters."""
 from dataclasses import asdict
 from datetime import datetime, timezone
-import hashlib
 from pathlib import Path
 import time
 import uuid
@@ -9,7 +8,7 @@ import subprocess
 
 from . import __version__
 from .api import Context, Finding
-from .files import safe_path, select_files
+from .files import safe_path, select_files, sha256_file
 from .ledger import persist
 from .hooks import installed_inputs
 from .loader import discover
@@ -32,13 +31,18 @@ def _findings(values: list[Finding]) -> list[Finding]:
 
 def _snapshot(root: Path, policy: dict, policy_path: Path) -> dict[str, str]:
     files = {policy_path}
-    for spec in specs(policy):
-        files.update(select_files(root, spec.paths))
-    for name in ["AGENTS.md", ".cursor/hooks.json", *installed_inputs(root), *policy.get("harness", {}).get("config_files", [])]:
+    files.update(select_files(root, [path for spec in specs(policy) for path in spec.paths]))
+    # harness.config_files belongs to the harness plugin's schema; an invalid
+    # shape must surface as that plugin's lint finding, not a core TypeError.
+    extra = policy.get("harness", {}).get("config_files", [])
+    names = ["AGENTS.md", ".cursor/hooks.json", *installed_inputs(root)]
+    if isinstance(extra, list):
+        names.extend(name for name in extra if isinstance(name, str))
+    for name in names:
         candidate = safe_path(root, name)
         if candidate.is_file():
             files.add(candidate)
-    return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(files)}
+    return {p.relative_to(root).as_posix(): sha256_file(p) for p in sorted(files)}
 
 
 def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, input_error: bool = False) -> dict:
@@ -51,7 +55,9 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, 
     operational_error = False
     try:
         path = safe_path(root, policy_name)
-        receipt["policy_sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+        if not path.is_file():
+            raise ValueError("Policy must be a regular file")
+        receipt["policy_sha256"] = sha256_file(path)
         policy = load_policy(path)
         registry = discover(policy["plugins"])
         if command == "lint-config" and not registry.linters:
@@ -59,8 +65,10 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, 
         receipt["plugins"] = policy["plugins"]
         context = Context(root, policy, path)
         if slot == "pre-commit":
-            dirty = subprocess.run(["git", "-C", str(root), "diff", "--quiet", "--"], capture_output=True)
-            untracked = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"], capture_output=True)
+            dirty = subprocess.run(["git", "-C", str(root), "diff", "--quiet", "--"],
+                                   capture_output=True, timeout=15)
+            untracked = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
+                                       capture_output=True, timeout=15)
             if dirty.returncode not in (0, 1) or untracked.returncode != 0:
                 raise ValueError("Cannot inspect Git index")
             if dirty.returncode == 1 or untracked.stdout.strip():

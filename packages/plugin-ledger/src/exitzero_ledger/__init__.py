@@ -22,13 +22,18 @@ from typing import Any
 import uuid
 
 from exitzero.api import Context
-from exitzero.files import safe_path
+from exitzero.services import safe_path, validate_relative, write_atomic
 
 
 API_VERSION = 1
 
 _LEDGER_SCHEMA_VERSION = 1
 _HINT_COMMITS = 20
+_HINT_PATH_BATCH = 256
+_HINT_ARGV_BUDGET = 128 * 1024
+# Receipt-derived text flows into Markdown and process argv; control
+# characters and NULs are never valid in a repository path or commit subject.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 # A ref name never starts with "-" and never contains spaces or shell-ish
 # characters; anything else would land in argv as an option.
 _REF_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~^/:-]*\Z")
@@ -64,7 +69,7 @@ def ledger_publish(context: Context, argv: list[str]) -> int:
     print(f"Record: {json_path.relative_to(context.root)}")
     print(f"Body:   {markdown_path.relative_to(context.root)}")
     if options["pr"] is not None:
-        error = _publish_to_pr(options["pr"], markdown_path, context.root)
+        error = _publish_to_pr(options["pr"], _render_markdown(record), context.root)
         if error is not None:
             print(f"ledger-publish: {error}", file=sys.stderr)
             return 2
@@ -122,9 +127,10 @@ def _validate_base(root: Path, base: str | None) -> None:
         raise ValueError(f"--base is not a valid git ref: {base}")
     if shutil.which("git") is None:
         raise ValueError("--base requires git on PATH")
+    env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
     result = subprocess.run(
         ["git", "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}"],
-        cwd=root, capture_output=True, text=True, timeout=15)
+        cwd=root, capture_output=True, text=True, timeout=15, env=env)
     if result.returncode != 0 or not result.stdout.strip():
         raise ValueError(f"--base does not resolve to a commit: {base}")
 
@@ -143,6 +149,8 @@ def _load_receipts(root: Path, since: datetime | None) -> tuple[list[dict[str, A
     for path in sorted(directory.glob("*.json")):
         try:
             checked = safe_path(root, f".exitzero/runs/{path.name}")
+            if not checked.is_file():
+                raise ValueError("not a regular file")
             receipt = json.loads(checked.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValueError):
             corrupt.append(path.name)
@@ -161,7 +169,10 @@ def _load_receipts(root: Path, since: datetime | None) -> tuple[list[dict[str, A
                 continue
             if moment < since:
                 continue
-        receipts.append(receipt)
+        # Keep only the fields aggregation needs; the per-file ``inputs`` hash
+        # map dominates receipt size and must not accumulate in memory.
+        receipts.append({key: receipt.get(key)
+                         for key in ("command", "status", "receipt", "findings")})
     return receipts, corrupt
 
 
@@ -196,7 +207,7 @@ def _build_record(context: Context, receipts: list[dict[str, Any]],
             if status == "passed":
                 continue
             path = finding.get("path")
-            if isinstance(path, str) and path:
+            if _implicated_path(path):
                 entry = implicated.setdefault(path, {"count": 0, "rules": set()})
                 entry["count"] += 1
                 entry["rules"].add(rule)
@@ -232,6 +243,17 @@ def _build_record(context: Context, receipts: list[dict[str, Any]],
     }
 
 
+def _implicated_path(value: Any) -> bool:
+    """A finding path must be a clean relative path before it reaches argv."""
+    if not isinstance(value, str) or not value or _CONTROL.search(value):
+        return False
+    try:
+        validate_relative(value)
+    except ValueError:
+        return False
+    return True
+
+
 def _suspect_commits(root: Path, base: str | None, paths: list[str]) -> list[dict[str, Any]] | None:
     """List recent commits touching implicated paths; None when git cannot help."""
 
@@ -242,23 +264,66 @@ def _suspect_commits(root: Path, base: str | None, paths: list[str]) -> list[dic
     rev_range = f"{base}..HEAD" if base else "HEAD"
     # GIT_NO_LAZY_FETCH keeps history inspection local: a partial clone must
     # never reach the network for a hint. ":(literal)" pins finding paths so
-    # glob characters like [] in a path cannot widen the match.
+    # glob characters like [] in a path cannot widen the match.  Paths are
+    # batched so a huge finding set cannot exceed the argv limit.
     env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
-    try:
-        result = subprocess.run(
-            ["git", "log", f"--max-count={_HINT_COMMITS}", "--format=%H%x00%s",
-             rev_range, "--", *[f":(literal){path}" for path in paths]],
-            cwd=root, capture_output=True, text=True, timeout=15, env=env)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if result.returncode != 0:
-        return None
-    commits = []
-    for line in result.stdout.splitlines():
-        sha, _, subject = line.partition("\x00")
-        if sha:
-            commits.append({"sha": sha[:12], "subject": subject})
-    return commits
+    commits: list[dict[str, Any]] = []
+    seen_shas: set[str] = set()
+    for batch in _path_batches(paths):
+        try:
+            result = subprocess.run(
+                ["git", "log", f"--max-count={_HINT_COMMITS}", "--format=%H%x00%cI%x00%s",
+                 rev_range, "--", *batch],
+                cwd=root, capture_output=True, text=True, timeout=15, env=env)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            sha, _, rest = line.partition("\x00")
+            date, _, subject = rest.partition("\x00")
+            if sha and sha[:12] not in seen_shas:
+                seen_shas.add(sha[:12])
+                commits.append({"sha": sha[:12], "subject": subject, "_date": date})
+    # Each batch returns newest-first within its own path set only; merge by
+    # committer date so a newer commit in a later batch is never truncated away.
+    commits.sort(key=lambda commit: commit["_date"], reverse=True)
+    return [{"sha": commit["sha"], "subject": commit["subject"]}
+            for commit in commits[:_HINT_COMMITS]]
+
+
+def _path_batches(paths: list[str]) -> Any:
+    """Group literal pathspecs under both a count cap and an argv byte budget."""
+    batch: list[str] = []
+    size = 0
+    for path in paths:
+        argument = f":(literal){path}"
+        weight = len(argument.encode("utf-8")) + 1
+        if weight > _HINT_ARGV_BUDGET:
+            continue  # a single argument this large can never reach git
+        if batch and (len(batch) >= _HINT_PATH_BATCH
+                      or size + weight > _HINT_ARGV_BUDGET):
+            yield batch
+            batch, size = [], 0
+        batch.append(argument)
+        size += weight
+    if batch:
+        yield batch
+
+
+def _md(value: Any) -> str:
+    """Render receipt-derived text as a Markdown code span with a safe fence.
+
+    Backslash escapes are literal inside code spans, so the fence is a
+    backtick run longer than any inside the text (padded when the text itself
+    begins or ends with a backtick or space).  Control characters render as
+    \\xNN so receipt data can inject neither markup nor terminal codes.
+    """
+    text = _CONTROL.sub(lambda match: f"\\x{ord(match.group(0)):02x}", str(value))
+    longest = max((len(match.group()) for match in re.finditer(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    pad = " " if text.startswith(("`", " ")) or text.endswith(("`", " ")) else ""
+    return f"{fence}{pad}{text}{pad}{fence}"
 
 
 def _render_markdown(record: dict[str, Any]) -> str:
@@ -269,22 +334,22 @@ def _render_markdown(record: dict[str, Any]) -> str:
         f"- Receipts aggregated: {record['receipts']}"
         + (f" (+{len(record['corrupt_receipts'])} corrupt skipped)"
            if record["corrupt_receipts"] else ""),
-        f"- Status: {', '.join(f'{name} {count}' for name, count in sorted(record['by_status'].items())) or 'none'}",
-        f"- Commands: {', '.join(f'{name} {count}' for name, count in sorted(record['by_command'].items())) or 'none'}",
+        f"- Status: {', '.join(f'{_md(name)} {count}' for name, count in sorted(record['by_status'].items())) or 'none'}",
+        f"- Commands: {', '.join(f'{_md(name)} {count}' for name, count in sorted(record['by_command'].items())) or 'none'}",
         "",
     ]
     hints = record["rollback_hints"]
     if hints["implicated_paths"]:
         lines.append("### Rollback hints — implicated paths")
         for entry in hints["implicated_paths"]:
-            lines.append(f"- `{entry['path']}` — {entry['finding_count']} finding(s): "
-                         + ", ".join(f"`{rule}`" for rule in entry["rules"]))
+            lines.append(f"- {_md(entry['path'])} — {entry['finding_count']} finding(s): "
+                         + ", ".join(_md(rule) for rule in entry["rules"]))
         commits = hints.get("suspect_commits")
         if commits:
             lines.append("")
             lines.append("Recent commits touching these paths:")
             for commit in commits:
-                lines.append(f"- `{commit['sha']}` {commit['subject']}")
+                lines.append(f"- {_md(commit['sha'])} {_md(commit['subject'])}")
         lines.append("")
         lines.append("Rollback stays manual: review these paths and revert deliberately.")
     else:
@@ -297,22 +362,26 @@ def _persist_record(root: Path, record: dict[str, Any]) -> tuple[Path, Path]:
     base = f".exitzero/ledger/record-{record['run_id']}"
     json_path = safe_path(root, base + ".json")
     markdown_path = safe_path(root, base + ".md")
-    json_path.parent.mkdir(parents=True, exist_ok=True)
-    json_path.write_text(json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
-                         encoding="utf-8")
-    markdown_path.write_text(_render_markdown(record), encoding="utf-8")
+    write_atomic(json_path,
+                 json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2) + "\n")
+    write_atomic(markdown_path, _render_markdown(record))
     return json_path, markdown_path
 
 
-def _publish_to_pr(pr: int, markdown_path: Path, root: Path) -> str | None:
-    """Post the record body via `gh`; the only external write, always explicit."""
+def _publish_to_pr(pr: int, body: str, root: Path) -> str | None:
+    """Post the record body via `gh`; the only external write, always explicit.
+
+    The body is piped to ``gh`` over stdin: handing it a repository path would
+    let a swapped or linked file substitute foreign content between our write
+    and ``gh``'s read.
+    """
 
     if shutil.which("gh") is None:
         return "--pr requires the GitHub CLI (gh) on PATH"
     try:
         result = subprocess.run(
-            ["gh", "pr", "comment", str(pr), "--body-file", str(markdown_path)],
-            cwd=root, capture_output=True, text=True, timeout=30)
+            ["gh", "pr", "comment", str(pr), "--body-file", "-"],
+            cwd=root, capture_output=True, text=True, timeout=30, input=body)
     except (OSError, subprocess.TimeoutExpired) as error:
         return f"gh invocation failed: {error}"
     if result.returncode != 0:

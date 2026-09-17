@@ -1,13 +1,13 @@
 """IDE adapters delegate to the shared runner and preserve existing hooks."""
-import hashlib
 import json
+import os
 from pathlib import Path
 import shlex
 import subprocess
 import sys
 
 from .api import Context, Finding
-from .files import safe_path
+from .files import safe_path, sha256_file, write_atomic
 
 CURSOR_EVENTS = {
     "preToolUse": "PreToolUse",
@@ -21,7 +21,9 @@ CURSOR_EVENTS = {
 
 def _launcher() -> list[str]:
     checkout = Path(__file__).resolve().parents[4] / "bin" / "exitzero"
-    return [sys.executable, str(checkout)] if checkout.is_file() else [sys.executable, "-m", "exitzero"]
+    # -P keeps the launcher's working directory off sys.path so a repository's
+    # own exitzero/ directory cannot shadow the installed package.
+    return [sys.executable, str(checkout)] if checkout.is_file() else [sys.executable, "-P", "-m", "exitzero"]
 
 
 def expected_cursor_command(root: Path, policy_path: Path, slot: str = "PostToolUse") -> str:
@@ -32,7 +34,12 @@ def expected_cursor_command(root: Path, policy_path: Path, slot: str = "PostTool
 
 def _manifest(root: Path) -> dict:
     path = safe_path(root, ".exitzero/hooks.json")
-    if path.exists():
+    # A non-regular manifest (FIFO, directory) is an operational error, not an
+    # empty manifest — silently treating it as absent would disable the drift
+    # check for every hook the file records.
+    if os.path.lexists(path) and not path.is_file():
+        raise ValueError("Hook installation manifest is not a regular file")
+    if path.is_file():
         value = json.loads(path.read_text(encoding="utf-8"))
         if (not isinstance(value, dict) or type(value.get("version")) is not int
                 or value["version"] != 1 or not isinstance(value.get("files"), dict)
@@ -65,7 +72,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
     if adapter == "cursor":
         relative = ".cursor/hooks.json"
         path = safe_path(root, relative)
-        data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"version": 1, "hooks": {}}
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"version": 1, "hooks": {}}
         if (not isinstance(data, dict) or type(data.get("version")) is not int
                 or data["version"] != 1 or not isinstance(data.get("hooks"), dict)):
             raise ValueError("Invalid existing Cursor hook configuration")
@@ -82,7 +89,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
     else:
         # Git executes hooks relative to the worktree root. Respect custom hook paths.
         result = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks/pre-commit"],
-                                capture_output=True, text=True, check=False)
+                                capture_output=True, text=True, check=False, timeout=15)
         if result.returncode != 0:
             raise ValueError("pre-commit adapter requires a Git repository")
         candidate = Path(result.stdout.strip())
@@ -95,16 +102,14 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         command = shlex.join([*_launcher(), "--root", str(root), "--policy", policy_path.relative_to(root).as_posix(),
                               "hooks", "run", "--slot", "pre-commit"])
         content = "#!/bin/sh\n# exitzero managed hook\nexec " + command + "\n"
-        if path.exists() and path.read_text(encoding="utf-8") != content:
+        if path.is_file() and path.read_text(encoding="utf-8") != content:
             raise ValueError("Existing pre-commit hook preserved; chain the CLI manually")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
+    write_atomic(path, content)
     if adapter == "pre-commit":
         path.chmod(path.stat().st_mode | 0o111)
-    manifest["files"][relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-    target = safe_path(root, ".exitzero/hooks.json")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(manifest, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+    manifest["files"][relative] = sha256_file(path)
+    write_atomic(safe_path(root, ".exitzero/hooks.json"),
+                 json.dumps(manifest, sort_keys=True, indent=2) + "\n")
     return relative
 
 
@@ -113,7 +118,7 @@ def lint_installed(context: Context) -> list[Finding]:
     findings = []
     for relative, digest in manifest["files"].items():
         path = safe_path(context.root, relative)
-        if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+        if not path.is_file() or sha256_file(path) != digest:
             findings.append(Finding("harness.hooks-drift", "Installed hook changed or disappeared; review and reinstall it.", relative))
     return findings
 

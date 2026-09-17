@@ -3,7 +3,9 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
+import exitzero_verify
 from exitzero.api import CheckSpec, Context
 from exitzero_verify import check_command, check_imports, check_syntax, check_test_quality, register
 
@@ -226,6 +228,20 @@ class VerifyPluginTests(unittest.TestCase):
             spec = self.spec("python.imports", ("src/pkg/api.py",), {"roots": ["src", "."]})
             findings = check_imports(self.context(root), spec)
             self.assertTrue(any("Relative import" in f.message for f in findings))
+
+    def test_imports_parse_each_module_once_per_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "lib.py").write_text("def real():\n    pass\n", encoding="utf-8")
+            (root / "a.py").write_text("import lib\nlib.missing\n", encoding="utf-8")
+            (root / "b.py").write_text("import lib\nlib.alsomissing\n", encoding="utf-8")
+            calls = []
+            real = exitzero_verify._module_symbols
+            with mock.patch.object(exitzero_verify, "_module_symbols",
+                                   side_effect=lambda path: (calls.append(path), real(path))[1]):
+                findings = check_imports(self.context(root), self.spec("python.imports"))
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(len(findings), 2)
 
     def test_test_quality_reports_empty_and_vacuous_tests(self):
         with tempfile.TemporaryDirectory() as tmp:

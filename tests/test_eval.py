@@ -98,6 +98,8 @@ class HarnessEvalTests(unittest.TestCase):
             self.assertEqual([turn["name"] for turn in turns], ["01-break", "02-fix"])
             self.assertTrue(all(turn["matched"] for turn in turns))
             self.assertTrue(all(turn["receipt"]["run_id"] for turn in turns))
+            # Reports keep findings and ids but never the per-file input maps.
+            self.assertTrue(all("inputs" not in turn["receipt"] for turn in turns))
 
     def test_mismatched_turn_fails_scenario(self):
         with tempfile.TemporaryDirectory() as tmp:
