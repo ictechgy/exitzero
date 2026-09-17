@@ -149,19 +149,22 @@ def select_files(root: Path, patterns: tuple[str, ...] | list[str]) -> list[Path
     return sorted(selected)
 
 
+def _raise_walk_error(error: OSError) -> None:
+    raise error
+
+
 def _walk_candidates(root: Path, wildcard_parts: list[tuple[str, ...]], selected: set[Path]) -> None:
     prefixes = {_literal_prefix(parts) for parts in wildcard_parts}
     minimal = [prefix for prefix in prefixes
                if not any(len(other) < len(prefix) and prefix[: len(other)] == other
                           for other in prefixes)]
-    match = functools.lru_cache(maxsize=None)(_match_parts)
     for prefix in minimal:
         if any(part in EXCLUDED for part in prefix):
             continue
         base = safe_path(root, "/".join(prefix)) if prefix else root
         if not base.is_dir():
             continue
-        for dirpath, dirnames, filenames in os.walk(base):
+        for dirpath, dirnames, filenames in os.walk(base, onerror=_raise_walk_error):
             current = Path(dirpath)
             keep = []
             for name in dirnames:
@@ -179,7 +182,7 @@ def _walk_candidates(root: Path, wildcard_parts: list[tuple[str, ...]], selected
                 relative = candidate.relative_to(root)
                 if (any(part in EXCLUDED for part in relative.parts)
                         or is_sensitive(relative)
-                        or not any(match(parts, relative.parts) for parts in wildcard_parts)):
+                        or not any(_match_parts(parts, relative.parts) for parts in wildcard_parts)):
                     continue
                 safe_path(root, relative.as_posix())
                 if candidate.is_file():

@@ -113,7 +113,7 @@ rules = []
             runner.FIXTURES = fixtures
             runner.run_case = lambda case, timeout=120.0: {"name": case["name"], "status": "PASS"}
 
-            self.assertEqual(runner.main(), 1)
+            self.assertEqual(runner.main([]), 1)
             summary = json.loads((tmp_root / ".exitzero" / "fixture-results.json").read_text())
             self.assertEqual((summary["passed"], summary["failed"], summary["skipped"]), (1, 1, 1))
             self.assertEqual(summary["skipped_cases"],
@@ -125,7 +125,7 @@ rules = []
 
             runner.FIXTURES = tmp_root / "only-skip"
             write_manifest(runner.FIXTURES / "skip-case", 'schema_version = 1\nskip = "needs a human"\n')
-            self.assertEqual(runner.main(), 0)
+            self.assertEqual(runner.main([]), 0)
 
 
 class TimeoutTests(unittest.TestCase):

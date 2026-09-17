@@ -7,7 +7,7 @@ import uuid
 import subprocess
 
 from . import __version__
-from .api import Context, Finding
+from .api import Context, Finding, Registry
 from .files import safe_path, select_files, sha256_file
 from .ledger import persist
 from .hooks import installed_inputs
@@ -29,9 +29,19 @@ def _findings(values: list[Finding]) -> list[Finding]:
     return values
 
 
-def _snapshot(root: Path, policy: dict, policy_path: Path) -> dict[str, str]:
-    files = {policy_path}
-    files.update(select_files(root, [path for spec in specs(policy) for path in spec.paths]))
+def _snapshot(context: Context, registry: Registry) -> dict[str, str]:
+    root, policy = context.root, context.policy
+    files = {context.policy_path}
+    patterns = []
+    for spec in specs(policy):
+        patterns.extend(spec.paths)
+        if spec.kind in registry.check_inputs:
+            extra_patterns = registry.check_inputs[spec.kind](context, spec)
+            if (not isinstance(extra_patterns, (list, tuple))
+                    or not all(isinstance(pattern, str) for pattern in extra_patterns)):
+                raise ValueError("Plugin returned invalid input patterns")
+            patterns.extend(extra_patterns)
+    files.update(select_files(root, patterns))
     # harness.config_files belongs to the harness plugin's schema; an invalid
     # shape must surface as that plugin's lint finding, not a core TypeError.
     extra = policy.get("harness", {}).get("config_files", [])
@@ -45,6 +55,25 @@ def _snapshot(root: Path, policy: dict, policy_path: Path) -> dict[str, str]:
     return {p.relative_to(root).as_posix(): sha256_file(p) for p in sorted(files)}
 
 
+def _requirement_findings(receipt: dict, outcomes: dict[str, str], valid: bool) -> list[Finding]:
+    findings = []
+    for requirement in receipt.get("requirements", []):
+        statuses = [outcomes.get(check) for check in requirement["checks"]]
+        status = "unverified"
+        if receipt["command"] != "lint-config":
+            if "failed" in statuses:
+                status = "failed"
+                findings.append(Finding("core.requirement-failed",
+                                        f"Requirement {requirement['id']} has failed mapped checks; inspect their findings."))
+            elif valid and statuses and all(value == "passed" for value in statuses):
+                status = "checks_passed"
+            if status == "unverified":
+                findings.append(Finding("core.requirement-unverified",
+                                        f"Requirement {requirement['id']} lacks valid verification evidence; map checks and complete a stable run."))
+        requirement["status"] = status
+    return findings
+
+
 def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, input_error: bool = False) -> dict:
     started = time.monotonic()
     receipt = {"schema_version": 1, "tool_version": __version__, "run_id": uuid.uuid4().hex,
@@ -53,12 +82,17 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, 
                "checks": [], "findings": [], "receipt": None}
     findings: list[Finding] = []
     operational_error = False
+    inputs_changed = False
+    verification_outcomes: dict[str, str] = {}
     try:
         path = safe_path(root, policy_name)
         if not path.is_file():
             raise ValueError("Policy must be a regular file")
         receipt["policy_sha256"] = sha256_file(path)
         policy = load_policy(path)
+        if "requirements" in policy:
+            receipt["requirements"] = [{"id": requirement["id"], "checks": list(requirement["checks"]),
+                                        "status": "unverified"} for requirement in policy["requirements"]]
         registry = discover(policy["plugins"])
         if command == "lint-config" and not registry.linters:
             raise ValueError("No config linter is registered")
@@ -76,7 +110,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, 
         checks = specs(policy)
         if any(spec.kind not in registry.checks for spec in checks):
             raise ValueError("Policy references an unregistered check kind")
-        receipt["inputs"] = _snapshot(root, policy, path)
+        receipt["inputs"] = _snapshot(context, registry)
         for name, linter in registry.linters.items():
             result = _findings(linter(context))
             findings.extend(result)
@@ -85,11 +119,13 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, 
             for spec in checks:
                 result = _findings(registry.checks[spec.kind](context, spec))
                 findings.extend(result)
-                receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": "failed" if result else "passed", "finding_count": len(result)})
+                verification_outcomes[spec.id] = "failed" if result else "passed"
+                receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": verification_outcomes[spec.id], "finding_count": len(result)})
             if slot is not None:
                 for handler in registry.hooks.get(slot, []):
                     findings.extend(_findings(handler(context, slot)))
-        if _snapshot(root, policy, path) != receipt["inputs"]:
+        if _snapshot(context, registry) != receipt["inputs"]:
+            inputs_changed = True
             findings.append(Finding("core.inputs-changed", "Inspected files changed during the run; rerun against stable inputs."))
     except (Exception, SystemExit, KeyboardInterrupt) as error:
         operational_error = True
@@ -98,6 +134,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, 
     if input_error:
         operational_error = True
         findings.append(Finding("core.hook-input", "Invalid hook input; expected a JSON object and a nonnegative integer loop_count."))
+    findings.extend(_requirement_findings(receipt, verification_outcomes, not operational_error and not inputs_changed))
     receipt["exit_code"] = 2 if operational_error else int(any(f.severity == "error" for f in findings))
     receipt["status"] = {0: "passed", 1: "failed", 2: "error"}[receipt["exit_code"]]
     receipt["findings"] = [asdict(f) for f in findings]
@@ -106,5 +143,8 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, 
         persist(root, receipt)
     except (OSError, ValueError):
         receipt["exit_code"], receipt["status"], receipt["receipt"] = 2, "error", None
+        for requirement in receipt.get("requirements", []):
+            if requirement["status"] == "checks_passed":
+                requirement["status"] = "unverified"
         receipt["findings"].append(asdict(Finding("core.receipt", "Cannot persist required run receipt; check directory permissions and symlinks.")))
     return receipt
