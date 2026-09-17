@@ -119,7 +119,8 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *, 
             for spec in checks:
                 result = _findings(registry.checks[spec.kind](context, spec))
                 findings.extend(result)
-                verification_outcomes[spec.id] = "failed" if result else "passed"
+                errors = [finding for finding in result if finding.severity == "error"]
+                verification_outcomes[spec.id] = "failed" if errors else "passed"
                 receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": verification_outcomes[spec.id], "finding_count": len(result)})
             if slot is not None:
                 for handler in registry.hooks.get(slot, []):

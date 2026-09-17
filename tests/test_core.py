@@ -489,6 +489,37 @@ class RequirementTests(unittest.TestCase):
         self.assertEqual(receipt["requirements"][0]["status"], "unverified")
 
 
+    def test_warning_only_mapped_check_stays_checks_passed(self):
+        from exitzero.api import Finding, Registry
+        self.configure()
+        registry = Registry()
+        registry.add_check("python.syntax", mock.Mock(side_effect=[
+            [Finding("advice", "consider renaming", severity="warning")],
+            [],
+        ]))
+        with mock.patch("exitzero.runner.discover", return_value=registry):
+            warned = run(self.root, "exitzero.toml", "check")
+            self.assertEqual(warned["exit_code"], 0)
+            self.assertEqual(warned["requirements"][0]["status"], "checks_passed")
+            clean = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(clean["exit_code"], 0)
+        self.assertEqual(clean["requirements"][0]["status"], "checks_passed")
+
+    def test_mixed_severity_mapped_check_fails_requirement(self):
+        from exitzero.api import Finding, Registry
+        self.configure()
+        registry = Registry()
+        registry.add_check("python.syntax", mock.Mock(return_value=[
+            Finding("advice", "consider renaming", severity="warning"),
+            Finding("broken", "cannot resolve symbol"),
+        ]))
+        with mock.patch("exitzero.runner.discover", return_value=registry):
+            receipt = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(receipt["exit_code"], 1)
+        self.assertEqual(receipt["requirements"][0]["status"], "failed")
+        self.assertIn("core.requirement-failed", [finding["rule"] for finding in receipt["findings"]])
+
+
 class SecurityRegressionTests(unittest.TestCase):
     """Review findings: special files, link write-through, terminal escaping."""
 
