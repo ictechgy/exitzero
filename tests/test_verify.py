@@ -26,6 +26,7 @@ class VerifyPluginTests(unittest.TestCase):
             set(registry.checks),
             {"python.syntax", "python.imports", "python.test-quality", "command"},
         )
+        self.assertEqual(registry.check_inputs, {"python.imports": exitzero_verify.import_inputs})
 
     def test_syntax_reports_invalid_python(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -104,6 +105,25 @@ class VerifyPluginTests(unittest.TestCase):
             (source / "main.py").write_text("import lib\nlib = object()\nlib.nope\n", encoding="utf-8")
             spec = self.spec("python.imports", ("my-src/main.py",), {"roots": ["my-src"]})
             self.assertEqual(check_imports(self.context(root), spec), [])
+
+    def test_import_input_provider_shares_root_and_option_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            context = self.context(root)
+            provider = exitzero_verify.import_inputs
+            self.assertEqual(provider(context, self.spec("python.imports")), ["**/*.py"])
+            self.assertEqual(provider(context, self.spec("python.imports", options={"roots": ["src", "."]})),
+                             ["src/**/*.py", "**/*.py"])
+            for options in ({"roots": "src"}, {"roots": [1]}, {"roots": [""]},
+                            {"roots": ["missing"]}, {"allow_modules": "json"},
+                            {"allow_modules": ["not a module"]}, {"unknown": True}):
+                with self.subTest(options=options):
+                    spec = self.spec("python.imports", options=options)
+                    with self.assertRaises(ValueError):
+                        provider(context, spec)
+                    with self.assertRaises(ValueError):
+                        check_imports(context, spec)
 
     def test_imports_validates_options(self):
         with tempfile.TemporaryDirectory() as tmp:

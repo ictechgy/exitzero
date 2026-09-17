@@ -33,6 +33,7 @@ class Context:
 
 
 CheckHandler = Callable[[Context, CheckSpec], list[Finding]]
+InputHandler = Callable[[Context, CheckSpec], list[str] | tuple[str, ...]]
 LintHandler = Callable[[Context], list[Finding]]
 HookHandler = Callable[[Context, str], list[Finding]]
 
@@ -46,8 +47,14 @@ class Registry:
     hooks: dict[str, list[HookHandler]] = field(default_factory=dict)
     commands: dict[str, Callable[[Context, list[str]], int]] = field(default_factory=dict)
 
-    def add_check(self, name: str, handler: CheckHandler) -> None:
+    check_inputs: dict[str, InputHandler] = field(default_factory=dict)
+
+    def add_check(self, name: str, handler: CheckHandler, *, inputs: InputHandler | None = None) -> None:
+        if inputs is not None and not callable(inputs):
+            raise ValueError("Invalid plugin input registration")
         self._add(self.checks, name, handler)
+        if inputs is not None:
+            self.check_inputs[name] = inputs
 
     def add_linter(self, name: str, handler: LintHandler) -> None:
         self._add(self.linters, name, handler)
@@ -64,6 +71,6 @@ class Registry:
 
     @staticmethod
     def _add(target: dict, name: str, handler: Callable) -> None:
-        if not name or name in target or not callable(handler):
+        if not isinstance(name, str) or not name or name in target or not callable(handler):
             raise ValueError("Invalid or duplicate plugin registration")
         target[name] = handler

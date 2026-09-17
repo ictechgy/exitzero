@@ -26,11 +26,27 @@ run. Findings must not include file contents, credentials or command output.
 
 Registration methods:
 
-- `add_check(kind, handler(context, spec))`
+- `add_check(kind, handler(context, spec), *, inputs=None)`
 - `add_linter(name, handler(context))`
 - `add_hook(slot, handler(context, slot))`, for `PreToolUse`, `PostToolUse`,
   `pre-commit`, `CI`.
 - `add_command(name, handler(context, argv))`, called with `exitzero plugin NAME`.
+
+The optional keyword-only `inputs(context, spec)` callable returns a `list` or
+`tuple` of repository-relative glob strings; an empty sequence means no additional
+inputs. Existing two-argument `add_check` calls are unchanged. Registration rejects
+invalid names, duplicate kinds, non-callable checks and non-callable providers
+(other than `None`). Providers must validate their options and only discover inputs,
+not execute checks or modify files; they also run during `lint-config`.
+
+Core calls each configured check's provider before and after dispatch, adds its
+patterns to `spec.paths`, and selects files through core's guarded `select_files`.
+The receipt fingerprints the initial selection. Changed hashes and added/deleted
+selected files produce `core.inputs-changed` (exit 1). Invalid return shapes,
+non-string or invalid path patterns, discovery exceptions and traversal I/O errors
+are operational errors (exit 2), with the normal receipt-persistence attempt.
+Providers should include all files influencing a check, even outside `spec.paths`,
+and return globs covering possible new members rather than only existing names.
 
 Core owns policy parsing, the registry, dispatch, generated AGENTS section, hook
 adapters and receipt persistence. Plugins own check semantics. `check` runs
@@ -57,10 +73,44 @@ Verification kinds in v1:
 - `python.imports`: statically check import resolution and local module symbols;
   options `roots` (default `["."]`), `allow_modules` (default `[]`). Imports
   inside `try` bodies guarded by `except ImportError`/`ModuleNotFoundError`
-  (the optional-dependency pattern) are skipped.
+  (the optional-dependency pattern) are skipped. Its input provider conservatively
+  fingerprints every selectable Python file under all validated roots, including
+  files outside `paths` and unreferenced modules, and detects membership changes.
 - `python.test-quality`: reject missing/empty/obviously vacuous test cases.
 - `command`: execute `options.argv` without a shell; `{python}` expands to the
   current Python interpreter. `options.timeout` defaults to 30 seconds.
+
+### Requirement mappings
+
+An optional `[[requirements]]` array in `exitzero.toml` maps completion
+requirements to verification check ids. Each entry requires exactly `id` (a
+unique policy name), `description` (1–1000 nonempty characters) and `checks`
+(a list of unique existing check ids; `[]` marks a deliberately unverified
+requirement). Mapping is documentation: a `checks_passed` status records that
+the mapped checks executed and passed in a stable run — it is not semantic
+proof that the requirement itself is satisfied.
+
+For example, append this mapping when a verification check with id `regression-suite`
+is already declared, then run `exitzero init --sync`:
+
+```toml
+[[requirements]]
+id = "acceptance"
+description = "The declared acceptance suite passes"
+checks = ["regression-suite"]
+```
+
+When configured, every `check`-family run records a `requirements` list in the receipt, one
+entry per requirement: `id`, the mapped `checks`, and a `status` of
+`checks_passed` (all mapped checks passed on stable inputs), `failed` (any
+mapped check failed) or `unverified` (nothing proved this run). Requirement
+statuses reflect actual outcomes from that run, not the mapping itself. A
+requirement with no mapped checks, or whose checks did not run, produces a
+`core.requirement-unverified` finding (exit 1); a failed mapped check keeps
+`failed`; operational errors keep `unverified` entries and exit 2. `lint-config`
+reports all requirements as `unverified` without failing merely for lacking
+execution. `core.inputs-changed` invalidates `checks_passed` evidence for that
+run. Policies without `requirements` behave exactly as before.
 
 Harness registration: one `harness.config` linter compares the managed AGENTS
 section to `render_agents(policy)`, checks installed hook drift, validates

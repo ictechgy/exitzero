@@ -26,7 +26,7 @@ def register(registry: Any) -> None:
     """Register all verification checks exposed by v1."""
 
     registry.add_check("python.syntax", check_syntax)
-    registry.add_check("python.imports", check_imports)
+    registry.add_check("python.imports", check_imports, inputs=import_inputs)
     registry.add_check("python.test-quality", check_test_quality)
     registry.add_check("command", check_command)
 
@@ -117,15 +117,29 @@ def _validate_import_options(options: dict[str, Any]) -> tuple[list[str], list[s
     return roots, allow_modules
 
 
-def _module_index(root: Path, roots: list[str]) -> dict[str, Path]:
-    index: dict[str, Path] = {}
-    from exitzero.services import safe_path, select_files
+def _import_roots(root: Path, roots: list[str]) -> list[tuple[Path, str]]:
+    from exitzero.services import safe_path
 
+    resolved = []
     for root_name in roots:
         base = safe_path(root, root_name)
-        if not base.exists() or not base.is_dir():
+        if not base.is_dir():
             raise ValueError(f"import root does not exist: {root_name}")
         pattern = "**/*.py" if root_name == "." else f"{Path(root_name).as_posix()}/**/*.py"
+        resolved.append((base, pattern))
+    return resolved
+
+
+def import_inputs(context: Context, spec: CheckSpec) -> list[str]:
+    roots, _ = _validate_import_options(spec.options)
+    return [pattern for _, pattern in _import_roots(context.root, roots)]
+
+
+def _module_index(root: Path, roots: list[str]) -> dict[str, Path]:
+    index: dict[str, Path] = {}
+    from exitzero.services import select_files
+
+    for base, pattern in _import_roots(root, roots):
         for path in select_files(root, (pattern,)):
             try:
                 relative = path.resolve().relative_to(base.resolve())

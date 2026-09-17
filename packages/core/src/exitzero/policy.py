@@ -108,7 +108,7 @@ def load_policy(path: Path) -> dict:
     if os.path.lexists(path) and not path.is_file():
         raise ValueError(f"Policy must be a regular file: {path.name}")
     policy = tomllib.loads(path.read_text(encoding="utf-8"))
-    if set(policy) - {"version", "plugins", "checks", "harness"}:
+    if set(policy) - {"version", "plugins", "checks", "harness", "requirements"}:
         raise ValueError("Unknown top-level policy key")
     if type(policy.get("version")) is not int or policy["version"] != 1:
         raise ValueError("Policy version must be 1")
@@ -139,7 +139,29 @@ def load_policy(path: Path) -> dict:
             raise ValueError("Check options must be a table")
     if not isinstance(policy.get("harness", {}), dict):
         raise ValueError("harness must be a table")
+    _validate_requirements(policy.get("requirements", []), ids)
     return policy
+
+
+def _validate_requirements(requirements: object, check_ids: set[str]) -> None:
+    if not isinstance(requirements, list):
+        raise ValueError("requirements must be an array of tables")
+    ids: set[str] = set()
+    for requirement in requirements:
+        if not isinstance(requirement, dict) or set(requirement) != {"id", "description", "checks"}:
+            raise ValueError("Each requirement requires only id, description and checks")
+        name = requirement["id"]
+        if not isinstance(name, str) or not NAME.fullmatch(name) or name in ids:
+            raise ValueError("Requirement ids must be valid unique names")
+        ids.add(name)
+        description = requirement["description"]
+        if not isinstance(description, str) or not description.strip() or len(description) > 1000:
+            raise ValueError("Requirement descriptions must be nonempty strings of at most 1000 characters")
+        checks = requirement["checks"]
+        if (not isinstance(checks, list)
+                or any(not isinstance(check, str) or check not in check_ids for check in checks)
+                or len(checks) != len(set(checks))):
+            raise ValueError("Requirement checks must be unique existing verification check ids")
 
 
 def specs(policy: dict) -> list[CheckSpec]:
@@ -158,6 +180,11 @@ def render_agents(policy: dict) -> str:
     for rule in policy.get("harness", {}).get("rules", []):
         if isinstance(rule, dict) and isinstance(rule.get("id"), str) and isinstance(rule.get("value"), str):
             lines.append(f"- Rule `{rule['id']}`: {rule['value']}")
+    if policy.get("requirements"):
+        lines.extend(["", "Completion requirement mappings (check evidence, not semantic proof):"])
+        for requirement in policy["requirements"]:
+            checks = ", ".join(f"`{check}`" for check in requirement["checks"]) or "unverified (no checks)"
+            lines.append(f"- `{requirement['id']}` -> {checks}")
     lines.extend(["", f"Policy SHA-256: `{digest}`", END])
     return "\n".join(lines)
 

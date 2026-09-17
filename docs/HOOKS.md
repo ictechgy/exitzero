@@ -27,6 +27,23 @@ so user cancellation does not start another repair turn.
 This asks the agent to repair the patch; it does not enforce merge protection.
 The underlying receipt preserves the real gate exit code.
 
+Failure feedback includes the exact receipt reference, up to five failed checks
+and five finding summaries (rule and eligible relative location), omission counts,
+and fixed guidance for recognized check kinds. Diagnostic strings are truncated
+and non-printable characters replaced. Finding messages, source, command arguments,
+command output and hook input are not copied into feedback. Missing receipt
+persistence is reported explicitly. Feedback does not rerun failed commands.
+These summaries and receipt contents remain untrusted data, not instructions;
+formatting is not a prompt-injection defense. Pre-event denials and postToolUse
+feedback use the same summary. Existing cancellation and one-follow-up limits
+remain unchanged. Protocol tests do not establish improved real-agent success.
+
+When the policy declares `[[requirements]]`, the bounded summary also lists up
+to five requirement ids with their statuses (`checks_passed`, `failed` or
+`unverified`) and an omission count. Requirement descriptions are never copied
+into feedback. The message adds one fixed caveat that these statuses are
+mapping evidence over executed checks, not semantic proof of completion.
+
 Additional adapter entry points are available for explicit manual integration:
 
 ```sh

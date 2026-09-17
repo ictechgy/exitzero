@@ -1,4 +1,5 @@
 """Black-box contracts for the CLI, policy, receipts and extension boundary."""
+import hashlib
 import io
 import json
 import os
@@ -13,6 +14,7 @@ REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / "bin" / "exitzero"
 
 sys.path.insert(0, str(REPO / "packages" / "core" / "src"))
+sys.path.insert(0, str(REPO / "packages" / "plugin-verify" / "src"))
 
 from exitzero import cli as cli_module  # noqa: E402
 from exitzero.files import _match_parts, select_files  # noqa: E402
@@ -46,6 +48,20 @@ class CliTests(unittest.TestCase):
             self.assertEqual(receipt["command"], command)
             self.assertEqual(len(receipt["policy_sha256"]), 64)
         self.assertEqual(len(list((self.root / ".exitzero/runs").glob("*.json"))), 2)
+
+    def test_requirement_cli_records_actual_outcome(self):
+        self.init()
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text() + '\n[[requirements]]\nid = "completion"\n'
+                          'description = "private_description_marker"\nchecks = ["syntax"]\n')
+        self.assertEqual(self.cli("init", "--sync").returncode, 0)
+        result = self.cli("check", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        receipt = json.loads(result.stdout)
+        self.assertEqual(receipt["requirements"], [
+            {"id": "completion", "checks": ["syntax"], "status": "checks_passed"}])
+        self.assertEqual(json.loads((self.root / receipt["receipt"]).read_text()), receipt)
+        self.assertNotIn("private_description_marker", result.stdout)
 
     def test_policy_error_still_has_receipt(self):
         (self.root / "exitzero.toml").write_text("version = [broken")
@@ -201,6 +217,59 @@ kind = "broken"
             self.assertTrue((self.root / payload["receipt"]).is_file())
             self.assertEqual(payload["status"], "error")
 
+    def test_import_dependency_hashes_and_membership_through_normal_gate(self):
+        (self.root / "src").mkdir()
+        (self.root / "dependencies").mkdir()
+        (self.root / "src/main.py").write_text("from dependency import value\n", encoding="utf-8")
+        dependency = self.root / "dependencies/dependency.py"
+        unreferenced = self.root / "dependencies/unreferenced.py"
+        unreferenced.write_text("other = 3\n", encoding="utf-8")
+        added = self.root / "dependencies/added.py"
+        for operation in ("stable", "mutated", "added", "deleted"):
+            with self.subTest(operation=operation):
+                dependency.write_text("value = 1\n", encoding="utf-8")
+                added.unlink(missing_ok=True)
+                expected_hash = hashlib.sha256(dependency.read_bytes()).hexdigest()
+                actions = {
+                    "stable": "assert Path('dependencies/dependency.py').read_text() == 'value = 1\\n'",
+                    "mutated": "Path('dependencies/dependency.py').write_text('value = 2\\n')",
+                    "added": "Path('dependencies/added.py').write_text('added = 1\\n')",
+                    "deleted": "Path('dependencies/dependency.py').unlink()",
+                }
+                argv = ["{python}", "-c", "from pathlib import Path; " + actions[operation]]
+                (self.root / "exitzero.toml").write_text(
+                    'version = 1\nplugins = ["exitzero_verify"]\n'
+                    '[[checks]]\nid = "imports"\nkind = "python.imports"\n'
+                    'paths = ["src/main.py"]\n[checks.options]\nroots = ["src", "dependencies"]\n'
+                    '[[checks]]\nid = "action"\nkind = "command"\n'
+                    '[checks.options]\nargv = ' + json.dumps(argv) + '\n', encoding="utf-8",
+                )
+                result = self.cli("check", "--format", "json")
+                self.assertEqual(result.returncode, 0 if operation == "stable" else 1, result.stdout + result.stderr)
+                receipt = json.loads(result.stdout)
+                self.assertEqual(json.loads((self.root / receipt["receipt"]).read_text()), receipt)
+                self.assertEqual(receipt["inputs"]["dependencies/dependency.py"], expected_hash)
+                self.assertEqual(receipt["inputs"]["dependencies/unreferenced.py"],
+                                 hashlib.sha256(unreferenced.read_bytes()).hexdigest())
+                self.assertNotIn("dependencies/added.py", receipt["inputs"])
+                self.assertEqual([check["status"] for check in receipt["checks"]], ["passed", "passed"])
+                self.assertEqual([finding["rule"] for finding in receipt["findings"]],
+                                 [] if operation == "stable" else ["core.inputs-changed"])
+
+    def test_import_default_root_fingerprints_dependencies_outside_paths(self):
+        (self.root / "main.py").write_text("from dependency import value\n", encoding="utf-8")
+        dependency = self.root / "dependency.py"
+        dependency.write_text("value = 1\n", encoding="utf-8")
+        (self.root / "exitzero.toml").write_text(
+            'version = 1\nplugins = ["exitzero_verify"]\n[[checks]]\n'
+            'id = "imports"\nkind = "python.imports"\npaths = ["main.py"]\n', encoding="utf-8",
+        )
+        result = self.cli("check", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        receipt = json.loads(result.stdout)
+        self.assertEqual(receipt["inputs"]["dependency.py"], hashlib.sha256(dependency.read_bytes()).hexdigest())
+        self.assertEqual(json.loads((self.root / receipt["receipt"]).read_text()), receipt)
+
     def test_installed_hook_changes_during_run_are_detected(self):
         import hashlib
         self.init()
@@ -225,6 +294,230 @@ argv = ["{python}", "-c", "from pathlib import Path; Path('hook.sh').write_text(
         self.assertIn("core.inputs-changed", [f["rule"] for f in payload["findings"]])
         self.assertIn("hook.sh", payload["inputs"])
         self.assertIn(".exitzero/hooks.json", payload["inputs"])
+
+
+class InputDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        (self.root / "exitzero.toml").write_text(
+            'version = 1\nplugins = ["example"]\n[[checks]]\n'
+            'id = "example"\nkind = "example"\npaths = ["main.py"]\n',
+            encoding="utf-8",
+        )
+        (self.root / "main.py").write_text("value = 1\n", encoding="utf-8")
+
+    def gate(self, registry):
+        with mock.patch("exitzero.runner.discover", return_value=registry):
+            receipt = run(self.root, "exitzero.toml", "check")
+        saved = json.loads((self.root / receipt["receipt"]).read_text())
+        self.assertEqual(saved, receipt)
+        return receipt
+
+    def test_registration_is_optional_keyword_only_and_atomic(self):
+        from exitzero.api import Registry
+
+        registry = Registry()
+        handler = mock.Mock(return_value=[])
+        provider = mock.Mock(return_value=[])
+        registry.add_check("legacy", handler)
+        self.assertIs(registry.checks["legacy"], handler)
+        self.assertEqual(registry.check_inputs, {})
+        registry.add_check("example", handler, inputs=provider)
+        for name, check, inputs in (("", handler, provider), ([], handler, provider),
+                                    (1, handler, provider), ("bad", None, provider),
+                                    ("bad", handler, []), ("example", handler, provider)):
+            with self.subTest(name=name, check=check, inputs=inputs):
+                with self.assertRaises(ValueError):
+                    registry.add_check(name, check, inputs=inputs)
+                self.assertEqual(registry.checks, {"legacy": handler, "example": handler})
+                self.assertEqual(registry.check_inputs, {"example": provider})
+        with self.assertRaises(TypeError):
+            registry.add_check("positional", handler, provider)
+
+    def test_discovery_accepts_list_tuple_and_empty_patterns_in_both_snapshots(self):
+        from exitzero.api import Registry
+
+        dependency = self.root / "dependency.py"
+        dependency.write_text("value = 2\n", encoding="utf-8")
+        for patterns in (["dependency.py"], ("dependency.py",), [], ()):
+            with self.subTest(patterns=patterns):
+                registry = Registry()
+                provider = mock.Mock(return_value=patterns)
+                registry.add_check("example", mock.Mock(return_value=[]), inputs=provider)
+                receipt = self.gate(registry)
+                self.assertEqual(receipt["exit_code"], 0, receipt)
+                self.assertEqual(provider.call_count, 2)
+                context, spec = provider.call_args.args
+                self.assertEqual(context.root, self.root)
+                self.assertEqual(spec.paths, ("main.py",))
+                self.assertIn("main.py", receipt["inputs"])
+                self.assertEqual("dependency.py" in receipt["inputs"], bool(patterns))
+
+    def test_invalid_discovery_results_are_operational_errors_in_either_snapshot(self):
+        from exitzero.api import Registry
+
+        for invalid in (None, "*.py", {"*.py"}, {"paths": []}, 1, [1], [""], [Path("main.py")]):
+            for snapshot in (1, 2):
+                with self.subTest(invalid=invalid, snapshot=snapshot):
+                    registry = Registry()
+                    handler = mock.Mock(return_value=[])
+                    provider = mock.Mock(side_effect=[invalid] if snapshot == 1 else [[], invalid])
+                    registry.add_check("example", handler, inputs=provider)
+                    receipt = self.gate(registry)
+                    self.assertEqual(receipt["exit_code"], 2, receipt)
+                    self.assertEqual([finding["rule"] for finding in receipt["findings"]], ["core.error"])
+                    self.assertEqual(handler.call_count, snapshot - 1)
+                    self.assertEqual(provider.call_count, snapshot)
+
+    def test_discovery_exceptions_are_operational_errors(self):
+        from exitzero.api import Registry
+
+        registry = Registry()
+        handler = mock.Mock(return_value=[])
+        registry.add_check("example", handler, inputs=mock.Mock(side_effect=OSError("discovery unavailable")))
+        receipt = self.gate(registry)
+        self.assertEqual(receipt["exit_code"], 2, receipt)
+        handler.assert_not_called()
+        self.assertIn("OSError", receipt["findings"][0]["message"])
+
+    def test_scandir_errors_propagate_and_fail_gate_discovery(self):
+        from exitzero.api import Registry
+
+        source = self.root / "dependencies"
+        nested = source / "nested"
+        nested.mkdir(parents=True)
+        (nested / "module.py").write_text("value = 2\n", encoding="utf-8")
+        original_scandir = os.scandir
+        for blocked in (source, nested):
+            with self.subTest(blocked=blocked.name):
+                def scandir(path):
+                    if Path(path) == blocked:
+                        raise OSError("directory unavailable")
+                    return original_scandir(path)
+
+                registry = Registry()
+                handler = mock.Mock(return_value=[])
+                registry.add_check("example", handler, inputs=lambda context, spec: ["dependencies/**/*.py"])
+                with mock.patch("exitzero.files.os.scandir", side_effect=scandir):
+                    with self.assertRaisesRegex(OSError, "directory unavailable"):
+                        select_files(self.root, ["dependencies/**/*.py"])
+                    receipt = self.gate(registry)
+                self.assertEqual(receipt["exit_code"], 2, receipt)
+                self.assertIn("OSError", receipt["findings"][0]["message"])
+                handler.assert_not_called()
+
+
+class RequirementTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.policy_path = self.root / "exitzero.toml"
+        self.base = 'version = 1\nplugins = ["exitzero_verify"]\n[[checks]]\nid = "syntax"\nkind = "python.syntax"\npaths = ["*.py"]\n'
+        (self.root / "example.py").write_text("value = 1\n")
+
+    def configure(self, checks='["syntax"]'):
+        self.policy_path.write_text(self.base + '\n[[requirements]]\nid = "complete"\n'
+                                    'description = "A verified result"\nchecks = ' + checks + '\n')
+
+    def test_failed_and_unmapped_requirements_block_completion(self):
+        self.configure()
+        (self.root / "example.py").write_text("def broken(:\n")
+        receipt = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(receipt["exit_code"], 1)
+        self.assertEqual(receipt["requirements"][0]["status"], "failed")
+        (self.root / "example.py").write_text("value = 1\n")
+        self.configure("[]")
+        receipt = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(receipt["exit_code"], 1)
+        self.assertEqual(receipt["requirements"][0]["status"], "unverified")
+        self.assertIn("core.requirement-unverified", [finding["rule"] for finding in receipt["findings"]])
+
+    def test_lint_does_not_claim_verification(self):
+        from exitzero.api import Registry
+        self.configure("[]")
+        registry = Registry()
+        handler = mock.Mock(return_value=[])
+        registry.add_check("python.syntax", handler)
+        registry.add_linter("syntax", lambda context: [])
+        with mock.patch("exitzero.runner.discover", return_value=registry):
+            receipt = run(self.root, "exitzero.toml", "lint-config")
+        self.assertEqual(receipt["exit_code"], 0)
+        self.assertEqual(receipt["requirements"][0]["status"], "unverified")
+        handler.assert_not_called()
+
+    def test_invalid_requirement_contracts_fail_policy(self):
+        invalid = ['checks = ["unknown"]', 'checks = ["syntax", "syntax"]',
+                   'checks = "syntax"', 'checks = [1]', 'checks = []\nextra = true']
+        for fields in invalid:
+            with self.subTest(fields=fields):
+                self.policy_path.write_text(self.base + '\n[[requirements]]\nid = "complete"\ndescription = "Result"\n' + fields)
+                receipt = run(self.root, "exitzero.toml", "check")
+                self.assertEqual(receipt["exit_code"], 2)
+                self.assertTrue((self.root / receipt["receipt"]).is_file())
+
+    def test_early_error_retains_unverified_requirement(self):
+        self.configure()
+        with mock.patch("exitzero.runner.discover", side_effect=ValueError("unavailable")):
+            receipt = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(receipt["exit_code"], 2)
+        self.assertEqual(receipt["requirements"][0]["status"], "unverified")
+
+    def test_changed_inputs_and_missing_receipt_invalidate_pass(self):
+        self.configure()
+        with mock.patch("exitzero.runner._snapshot", side_effect=[{"example.py": "before"}, {"example.py": "after"}]):
+            receipt = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(receipt["exit_code"], 1)
+        self.assertEqual(receipt["requirements"][0]["status"], "unverified")
+        with mock.patch("exitzero.runner.persist", side_effect=OSError("unavailable")):
+            receipt = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(receipt["exit_code"], 2)
+        self.assertIsNone(receipt["receipt"])
+        self.assertEqual(receipt["requirements"][0]["status"], "unverified")
+
+    def test_linter_id_cannot_supply_verification_result(self):
+        from exitzero.api import Registry
+        self.configure()
+        registry = Registry()
+        registry.add_linter("syntax", lambda context: [])
+        registry.add_check("python.syntax", mock.Mock(side_effect=ValueError("unavailable")))
+        with mock.patch("exitzero.runner.discover", return_value=registry):
+            receipt = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(receipt["exit_code"], 2)
+        self.assertEqual(receipt["requirements"][0]["status"], "unverified")
+
+
+    def test_warning_only_mapped_check_stays_checks_passed(self):
+        from exitzero.api import Finding, Registry
+        self.configure()
+        registry = Registry()
+        registry.add_check("python.syntax", mock.Mock(side_effect=[
+            [Finding("advice", "consider renaming", severity="warning")],
+            [],
+        ]))
+        with mock.patch("exitzero.runner.discover", return_value=registry):
+            warned = run(self.root, "exitzero.toml", "check")
+            self.assertEqual(warned["exit_code"], 0)
+            self.assertEqual(warned["requirements"][0]["status"], "checks_passed")
+            clean = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(clean["exit_code"], 0)
+        self.assertEqual(clean["requirements"][0]["status"], "checks_passed")
+
+    def test_mixed_severity_mapped_check_fails_requirement(self):
+        from exitzero.api import Finding, Registry
+        self.configure()
+        registry = Registry()
+        registry.add_check("python.syntax", mock.Mock(return_value=[
+            Finding("advice", "consider renaming", severity="warning"),
+            Finding("broken", "cannot resolve symbol"),
+        ]))
+        with mock.patch("exitzero.runner.discover", return_value=registry):
+            receipt = run(self.root, "exitzero.toml", "check")
+        self.assertEqual(receipt["exit_code"], 1)
+        self.assertEqual(receipt["requirements"][0]["status"], "failed")
+        self.assertIn("core.requirement-failed", [finding["rule"] for finding in receipt["findings"]])
 
 
 class SecurityRegressionTests(unittest.TestCase):

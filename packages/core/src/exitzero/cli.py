@@ -112,6 +112,10 @@ def emit(receipt: dict, output: str) -> None:
         if finding.get("line"):
             location += f":{finding['line']}"
         print(f"  {_scrub(finding['rule'])}{location}: {_scrub(finding['message'])}")
+    if receipt.get("requirements"):
+        print("Requirement mappings (check evidence, not semantic proof):")
+        for requirement in receipt["requirements"]:
+            print(f"  {_scrub(requirement['id'])}: {_scrub(requirement['status'])}")
     print(f"Receipt: {receipt['receipt'] or 'NOT WRITTEN'}")
 
 
