@@ -1,12 +1,13 @@
 """Strict policy parsing and deterministic managed documentation."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import tomllib
 
 from .api import CheckSpec
-from .files import safe_path, validate_relative
+from .files import safe_path, validate_relative, write_atomic
 
 BEGIN = "<!-- exitzero:begin -->"
 END = "<!-- exitzero:end -->"
@@ -102,6 +103,10 @@ def python_profile_policy(
 
 
 def load_policy(path: Path) -> dict:
+    # A FIFO or device file would block the read forever; every caller
+    # (run, init --sync, report) shares this single regular-file guard.
+    if os.path.lexists(path) and not path.is_file():
+        raise ValueError(f"Policy must be a regular file: {path.name}")
     policy = tomllib.loads(path.read_text(encoding="utf-8"))
     if set(policy) - {"version", "plugins", "checks", "harness"}:
         raise ValueError("Unknown top-level policy key")
@@ -159,7 +164,7 @@ def render_agents(policy: dict) -> str:
 
 def sync_agents(root: Path, policy: dict) -> None:
     path = safe_path(root, "AGENTS.md")
-    current = path.read_text(encoding="utf-8") if path.exists() else ""
+    current = path.read_text(encoding="utf-8") if path.is_file() else ""
     section = render_agents(policy)
     if BEGIN not in current and END not in current:
         updated = current.rstrip() + ("\n\n" if current.strip() else "") + section + "\n"
@@ -168,4 +173,4 @@ def sync_agents(root: Path, policy: dict) -> None:
         updated = current[:start] + section + current[end:]
     else:
         raise ValueError("AGENTS.md has ambiguous managed section markers; repair them first")
-    path.write_text(updated, encoding="utf-8")
+    write_atomic(path, updated)

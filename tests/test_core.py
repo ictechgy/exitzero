@@ -1,4 +1,5 @@
 """Black-box contracts for the CLI, policy, receipts and extension boundary."""
+import io
 import json
 import os
 from pathlib import Path
@@ -6,9 +7,16 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
 CLI = REPO / "bin" / "exitzero"
+
+sys.path.insert(0, str(REPO / "packages" / "core" / "src"))
+
+from exitzero import cli as cli_module  # noqa: E402
+from exitzero.files import _match_parts, select_files  # noqa: E402
+from exitzero.runner import run  # noqa: E402
 
 
 class CliTests(unittest.TestCase):
@@ -217,6 +225,153 @@ argv = ["{python}", "-c", "from pathlib import Path; Path('hook.sh').write_text(
         self.assertIn("core.inputs-changed", [f["rule"] for f in payload["findings"]])
         self.assertIn("hook.sh", payload["inputs"])
         self.assertIn(".exitzero/hooks.json", payload["inputs"])
+
+
+class SecurityRegressionTests(unittest.TestCase):
+    """Review findings: special files, link write-through, terminal escaping."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *args],
+                              capture_output=True, text=True, timeout=30)
+
+    def init(self):
+        self.assertEqual(self.cli("init").returncode, 0)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs need POSIX mkfifo")
+    def test_fifo_policy_fails_instead_of_blocking(self):
+        os.mkfifo(self.root / "exitzero.toml")
+        result = self.cli("check", "--format", "json")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout)["status"], "error")
+
+    def test_hardlinked_agents_md_is_not_written_through(self):
+        self.init()
+        outside = self.root / "outside.txt"
+        outside.write_text("external content\n", encoding="utf-8")
+        agents = self.root / "AGENTS.md"
+        agents.unlink()
+        os.link(outside, agents)
+        self.assertEqual(self.cli("init", "--sync").returncode, 0)
+        self.assertEqual(outside.read_text(encoding="utf-8"), "external content\n")
+        self.assertNotEqual(os.stat(agents).st_ino, os.stat(outside).st_ino)
+        self.assertIn("exitzero:begin", agents.read_text(encoding="utf-8"))
+
+    def test_human_output_escapes_control_characters(self):
+        self.init()
+        (self.root / "evil\x1b[2Jfile.py").write_text("def broken(:\n", encoding="utf-8")
+        result = self.cli("check")
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn("\x1b", result.stdout)
+        self.assertIn("\\x1b", result.stdout)
+
+    def test_hook_input_recursion_error_still_persists_receipt(self):
+        self.init()
+        payload = "[" * 5000 + "1" + "]" * 5000
+        with mock.patch.object(sys, "stdin", io.StringIO(payload)):
+            code = cli_module.main(["--root", str(self.root), "hooks", "run",
+                                    "--adapter", "cursor", "--event", "stop"])
+        self.assertEqual(code, 2)
+        receipts = list((self.root / ".exitzero" / "runs").glob("*.json"))
+        self.assertTrue(receipts, "a hook invocation must still persist a receipt")
+
+    def test_pre_commit_git_timeout_is_operational_error(self):
+        self.init()
+        with mock.patch("subprocess.run",
+                        side_effect=subprocess.TimeoutExpired(["git"], 15)):
+            receipt = run(self.root, "exitzero.toml", "check", "pre-commit")
+        self.assertEqual(receipt["exit_code"], 2)
+        self.assertIn("core.error", [f["rule"] for f in receipt["findings"]])
+
+    def test_select_files_prunes_excluded_and_matches_globstar(self):
+        (self.root / "node_modules" / "pkg").mkdir(parents=True)
+        (self.root / "node_modules" / "pkg" / "x.py").write_text("", encoding="utf-8")
+        (self.root / "src" / "deep").mkdir(parents=True)
+        (self.root / "src" / "deep" / "a.py").write_text("", encoding="utf-8")
+        (self.root / "src" / "top.py").write_text("", encoding="utf-8")
+        (self.root / "tests").mkdir()
+        (self.root / "tests" / "test_a.py").write_text("", encoding="utf-8")
+        (self.root / "tests" / "helper.py").write_text("", encoding="utf-8")
+        names = {p.relative_to(self.root).as_posix()
+                 for p in select_files(self.root, ["src/**/*.py", "tests/test_*.py"])}
+        self.assertEqual(names, {"src/deep/a.py", "src/top.py", "tests/test_a.py"})
+        self.assertIn("src/top.py", {p.relative_to(self.root).as_posix()
+                                     for p in select_files(self.root, ["**/*.py"])})
+        self.assertEqual(select_files(self.root, ["src/top.py"]),
+                         [self.root / "src" / "top.py"])
+
+    @unittest.skipUnless(hasattr(os, "symlink") or os.name != "nt", "needs symlink support")
+    def test_select_files_rejects_symlinked_directory(self):
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "x.py").write_text("", encoding="utf-8")
+        (self.root / "src").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(ValueError):
+            select_files(self.root, ["src/**/*.py"])
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs need POSIX mkfifo")
+    def test_fifo_policy_blocks_init_sync_too(self):
+        # load_policy's regular-file guard covers every caller, not just check.
+        os.mkfifo(self.root / "exitzero.toml")
+        result = self.cli("init", "--sync")
+        self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs need POSIX mkfifo")
+    def test_fifo_manifest_is_an_operational_error(self):
+        self.init()
+        manifest = self.root / ".exitzero" / "hooks.json"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.unlink(missing_ok=True)
+        os.mkfifo(manifest)
+        # A non-regular manifest must surface as an error; treating it as an
+        # empty manifest would silently disable every recorded drift check.
+        result = self.cli("lint-config", "--format", "json")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    @unittest.skipUnless(hasattr(os, "symlink") or os.name != "nt", "needs symlink support")
+    def test_select_files_literal_excluded_and_unreachable_symlink(self):
+        # A literal path inside an excluded directory stays excluded.
+        (self.root / "node_modules" / "pkg").mkdir(parents=True)
+        (self.root / "node_modules" / "pkg" / "x.py").write_text("", encoding="utf-8")
+        self.assertEqual(select_files(self.root, ["node_modules/pkg/x.py"]), [])
+        # A symlinked directory no pattern can reach is pruned, not fatal.
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "x.py").write_text("", encoding="utf-8")
+        (self.root / "src").mkdir()
+        (self.root / "src" / "a.py").write_text("", encoding="utf-8")
+        (self.root / "src" / "assets").mkdir()
+        (self.root / "src" / "assets" / "link").symlink_to(outside, target_is_directory=True)
+        self.assertEqual([p.name for p in select_files(self.root, ["src/*.py"])], ["a.py"])
+        # A pattern that could match beneath the link still fails the run.
+        with self.assertRaises(ValueError):
+            select_files(self.root, ["src/**/*.py"])
+        # Directory-only patterns never select regular files.
+        self.assertEqual(select_files(self.root, ["src/*.py/"]), [])
+
+    def test_repeated_globstar_match_is_polynomial(self):
+        # Twelve '**' segments against twelve path parts branched
+        # exponentially; the index-keyed memo keeps it O(pattern * path).
+        pattern = ("**",) * 12 + ("missing.py",)
+        candidate = ("a",) * 12 + ("actual.py",)
+        self.assertFalse(_match_parts(pattern, candidate))
+        self.assertTrue(_match_parts(("**", "*.py"), ("a", "b", "c.py")))
+
+    def test_invalid_harness_config_is_linted_not_core_error(self):
+        self.init()
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text().replace(
+            "config_files = []", "config_files = 123"))
+        result = self.cli("lint-config", "--format", "json")
+        payload = json.loads(result.stdout)
+        # The harness linter reports the shape error; core must not die first.
+        self.assertEqual(payload["exit_code"], 1, payload)
+        rules = [f["rule"] for f in payload["findings"]]
+        self.assertIn("harness.config", rules)
 
 
 if __name__ == "__main__":

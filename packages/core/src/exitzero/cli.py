@@ -2,13 +2,14 @@
 import argparse
 import json
 from pathlib import Path
+import re
 import shlex
 import sys
 from urllib.parse import quote
 
 from . import __version__
 from .api import Context, HOOK_SLOTS
-from .files import safe_path, select_files, validate_relative
+from .files import safe_path, select_files, validate_relative, write_atomic
 from .hooks import CURSOR_EVENTS, cursor_response, install
 from .loader import discover
 from .policy import DEFAULT_POLICY, load_policy, python_profile_policy, sync_agents
@@ -90,6 +91,14 @@ def _sarif(receipt: dict) -> dict:
     }
 
 
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
+
+
+def _scrub(value: object) -> str:
+    """Neutralize control characters so hostile paths cannot inject terminal escapes."""
+    return _CONTROL.sub(lambda match: f"\\x{ord(match.group(0)):02x}", str(value))
+
+
 def emit(receipt: dict, output: str) -> None:
     if output == "sarif":
         print(json.dumps(_sarif(receipt), ensure_ascii=False, sort_keys=True))
@@ -99,10 +108,10 @@ def emit(receipt: dict, output: str) -> None:
         return
     print(f"exitzero: {receipt['status']} (exit {receipt['exit_code']})")
     for finding in receipt["findings"]:
-        location = f" {finding['path']}" if finding.get("path") else ""
+        location = f" {_scrub(finding['path'])}" if finding.get("path") else ""
         if finding.get("line"):
             location += f":{finding['line']}"
-        print(f"  {finding['rule']}{location}: {finding['message']}")
+        print(f"  {_scrub(finding['rule'])}{location}: {_scrub(finding['message'])}")
     print(f"Receipt: {receipt['receipt'] or 'NOT WRITTEN'}")
 
 
@@ -187,7 +196,7 @@ def main(argv: list[str] | None = None) -> int:
                 payload = json.loads(sys.stdin.read(1024 * 1024))
                 if not isinstance(payload, dict) or type(payload.get("loop_count", 0)) is not int or payload.get("loop_count", 0) < 0:
                     raise ValueError("Invalid Cursor payload")
-            except (ValueError, OSError):
+            except (ValueError, OSError, RecursionError):
                 # Still execute and persist the actual gate outcome for every invocation.
                 receipt = run(root, args.policy, "check", CURSOR_EVENTS[args.event], input_error=True)
                 print(json.dumps({"error": "Invalid Cursor JSON input", "receipt": receipt["receipt"]}))
@@ -208,23 +217,23 @@ def main(argv: list[str] | None = None) -> int:
             if not args.sync:
                 if path.exists():
                     raise ValueError("Policy already exists; use init --sync")
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(generated_policy, encoding="utf-8")
+                write_atomic(path, generated_policy)
                 ignore = safe_path(root, ".gitignore")
-                existing = ignore.read_text(encoding="utf-8") if ignore.exists() else ""
+                existing = ignore.read_text(encoding="utf-8") if ignore.is_file() else ""
                 additions = [item for item in ("/.exitzero/", "__pycache__/") if item not in existing.splitlines()]
                 if additions:
-                    ignore.write_text(existing.rstrip() + ("\n" if existing else "") + "\n".join(additions) + "\n", encoding="utf-8")
+                    write_atomic(ignore, existing.rstrip() + ("\n" if existing else "") + "\n".join(additions) + "\n")
                 if not select_files(root, ["**/*.py"]):
-                    example = safe_path(root, "exitzero_sample.py")
-                    example.write_text('"""Replace this sample with your project checks."""\n\ndef add(left: int, right: int) -> int:\n    return left + right\n', encoding="utf-8")
+                    write_atomic(safe_path(root, "exitzero_sample.py"),
+                                 '"""Replace this sample with your project checks."""\n\ndef add(left: int, right: int) -> int:\n    return left + right\n')
             policy = load_policy(path)
             sync_agents(root, policy)
             print("Policy and AGENTS.md synchronized. Run exitzero check to verify.")
             return 0
         if args.command == "report":
             directory = safe_path(root, ".exitzero/runs")
-            files = sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime_ns)
+            files = sorted((p for p in directory.glob("*.json") if p.is_file()),
+                           key=lambda p: p.stat().st_mtime_ns)
             if not files:
                 raise ValueError("No receipt exists; run check first")
             latest = safe_path(root, files[-1].relative_to(root).as_posix())
