@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — released 2026-09-16
 
 **Roadmap tail**
 
