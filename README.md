@@ -158,6 +158,7 @@ rule files are not understood by v1.
 exitzero init
 exitzero init --sync
 exitzero check --format json
+exitzero check --reuse --format json
 exitzero lint-config --format json
 exitzero hooks install --adapter cursor
 exitzero hooks install --adapter pre-commit
@@ -181,6 +182,14 @@ audit logs. See [the plugin contract](docs/PLUGIN_API.md) for the config
 schema. `plugin ledger-publish` rolls receipts into a run record with
 rollback hints under `.exitzero/ledger/`; `--pr N` posts it via `gh` —
 explicitly, and only then.
+
+`check --reuse` shortens iterative loops: a check is recorded as `reused`
+instead of re-executed only when a prior receipt passed that check against
+the same policy, tool version, and byte-identical selected inputs (the
+check's `paths` plus plugin-declared inputs). Added, deleted or modified
+inputs re-run the check, and hook gates always execute fully. Reuse is
+evidence, not a new result — the receipt names the source run under
+`reused_from`.
 
 Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
 through exit codes:

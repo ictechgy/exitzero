@@ -14,7 +14,8 @@
     "plugins": {"type": "array", "items": {"type": "string"}},
     "inputs": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
     "checks": {"type": "array", "items": {"type": "object", "required": ["id", "kind", "status", "finding_count"], "properties": {
-      "id": {"type": "string"}, "kind": {"type": "string"}, "status": {"enum": ["passed", "failed"]}, "finding_count": {"type": "integer", "minimum": 0}
+      "id": {"type": "string"}, "kind": {"type": "string"}, "status": {"enum": ["passed", "failed", "reused"]}, "finding_count": {"type": "integer", "minimum": 0},
+      "inputs": {"type": "array", "items": {"type": "string"}}, "reused_from": {"type": "string", "pattern": "^[a-f0-9]{32}$"}
     }, "additionalProperties": false}},
     "requirements": {"type": "array", "items": {"type": "object", "required": ["id", "checks", "status"], "properties": {
       "id": {"type": "string"}, "checks": {"type": "array", "items": {"type": "string"}}, "status": {"enum": ["checks_passed", "failed", "unverified"]}

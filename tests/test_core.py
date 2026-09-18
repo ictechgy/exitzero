@@ -296,6 +296,109 @@ argv = ["{python}", "-c", "from pathlib import Path; Path('hook.sh').write_text(
         self.assertIn(".exitzero/hooks.json", payload["inputs"])
 
 
+class ReuseTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *args],
+                              capture_output=True, text=True, timeout=30)
+
+    def write_policy(self, suffix=""):
+        (self.root / "exitzero.toml").write_text(
+            'version = 1\nplugins = ["exitzero_verify"]\n'
+            '[[checks]]\nid = "dir_a"\nkind = "python.syntax"\npaths = ["a/*.py"]\n'
+            '[[checks]]\nid = "dir_b"\nkind = "python.syntax"\npaths = ["b/*.py"]\n'
+            + suffix, encoding="utf-8")
+
+    def setup_dirs(self):
+        (self.root / "a").mkdir()
+        (self.root / "b").mkdir()
+        (self.root / "a/x.py").write_text("x = 1\n", encoding="utf-8")
+        (self.root / "b/y.py").write_text("y = 1\n", encoding="utf-8")
+        self.write_policy()
+
+    def check_payload(self, *extra, expected=0):
+        result = self.cli("check", *extra, "--format", "json")
+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def statuses(self, payload):
+        return {check["id"]: check["status"] for check in payload["checks"]}
+
+    def test_reuse_records_inputs_and_reuses_unchanged_passes(self):
+        self.setup_dirs()
+        first = self.check_payload()
+        self.assertEqual(self.statuses(first), {"dir_a": "passed", "dir_b": "passed"})
+        for check in first["checks"]:
+            self.assertEqual(check["inputs"], [f"{check['id'][-1]}/{'x' if check['id'] == 'dir_a' else 'y'}.py"])
+        second = self.check_payload("--reuse")
+        self.assertEqual(self.statuses(second), {"dir_a": "reused", "dir_b": "reused"})
+        self.assertEqual([check["reused_from"] for check in second["checks"]],
+                         [first["run_id"], first["run_id"]])
+
+    def test_reuse_reruns_only_the_changed_check(self):
+        self.setup_dirs()
+        self.check_payload()
+        (self.root / "a/x.py").write_text("x = 2\n", encoding="utf-8")
+        payload = self.check_payload("--reuse")
+        self.assertEqual(self.statuses(payload), {"dir_a": "passed", "dir_b": "reused"})
+
+    def test_reuse_detects_added_and_deleted_inputs(self):
+        self.setup_dirs()
+        self.check_payload()
+        (self.root / "a/new.py").write_text("n = 1\n", encoding="utf-8")
+        self.assertEqual(self.statuses(self.check_payload("--reuse")),
+                         {"dir_a": "passed", "dir_b": "reused"})
+        # A changed selection re-runs the check instead of reusing.
+        (self.root / "b/extra.py").write_text("e = 1\n", encoding="utf-8")
+        payload = self.check_payload("--reuse")
+        self.assertEqual(self.statuses(payload), {"dir_a": "reused", "dir_b": "passed"})
+        # Back to the original selection, the older passing receipt is evidence again.
+        (self.root / "b/extra.py").unlink()
+        payload = self.check_payload("--reuse")
+        self.assertEqual(self.statuses(payload), {"dir_a": "reused", "dir_b": "reused"})
+        # An emptied selection can never prove stable inputs; it errors, not reuses.
+        (self.root / "b/y.py").unlink()
+        payload = self.check_payload("--reuse", expected=2)
+        self.assertEqual(self.statuses(payload), {"dir_a": "reused"})
+
+    def test_reuse_never_reuses_failed_checks(self):
+        self.setup_dirs()
+        (self.root / "a/bad.py").write_text("def broken(:\n", encoding="utf-8")
+        self.check_payload(expected=1)
+        payload = self.check_payload("--reuse", expected=1)
+        self.assertEqual(self.statuses(payload), {"dir_a": "failed", "dir_b": "reused"})
+
+    def test_reuse_reruns_after_policy_change_and_empty_history(self):
+        self.setup_dirs()
+        first = self.check_payload("--reuse")
+        self.assertEqual(self.statuses(first), {"dir_a": "passed", "dir_b": "passed"})
+        self.assertNotIn("reused_from", first["checks"][0])
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text() + "\n# comment drift\n", encoding="utf-8")
+        self.assertEqual(self.statuses(self.check_payload("--reuse")),
+                         {"dir_a": "passed", "dir_b": "passed"})
+
+    def test_reuse_satisfies_requirement_evidence(self):
+        self.setup_dirs()
+        self.write_policy('\n[[requirements]]\nid = "done"\ndescription = "Done"\n'
+                          'checks = ["dir_a", "dir_b"]\n')
+        self.check_payload()
+        payload = self.check_payload("--reuse")
+        self.assertEqual(payload["requirements"][0]["status"], "checks_passed")
+
+    def test_reuse_human_output_lists_reused_checks(self):
+        self.setup_dirs()
+        self.assertEqual(self.cli("check").returncode, 0)
+        result = self.cli("check", "--reuse")
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn("Reused passing evidence", result.stdout)
+        self.assertIn("dir_a", result.stdout)
+
+
 class InputDiscoveryTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
