@@ -37,6 +37,9 @@ def parser() -> argparse.ArgumentParser:
     for name in ("check", "lint-config"):
         child = commands.add_parser(name)
         child.add_argument("--format", choices=("human", "json", "sarif"), default="human")
+        if name == "check":
+            child.add_argument("--reuse", action="store_true",
+                               help="Reuse passing check results when a check's selected inputs are unchanged since a prior receipt")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
     installer = hooks.add_parser("install")
     installer.add_argument("--adapter", choices=("cursor", "pre-commit"), default="cursor")
@@ -107,6 +110,9 @@ def emit(receipt: dict, output: str) -> None:
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
         return
     print(f"exitzero: {receipt['status']} (exit {receipt['exit_code']})")
+    reused = [_scrub(check["id"]) for check in receipt.get("checks", []) if check.get("status") == "reused"]
+    if reused:
+        print(f"  Reused passing evidence (inputs unchanged): {', '.join(reused)}")
     for finding in receipt["findings"]:
         location = f" {_scrub(finding['path'])}" if finding.get("path") else ""
         if finding.get("line"):
@@ -191,7 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     root = Path(args.root).resolve()
     if args.command in {"check", "lint-config"}:
-        receipt = run(root, args.policy, args.command)
+        receipt = run(root, args.policy, args.command,
+                      reuse=args.command == "check" and args.reuse)
         emit(receipt, args.format)
         return receipt["exit_code"]
     if args.command == "hooks" and args.hook_command == "run":
