@@ -8,7 +8,7 @@ import uuid
 import subprocess
 
 from . import __version__
-from .api import Context, Finding, Registry
+from .api import CheckSpec, Context, Finding, Registry
 from .files import safe_path, select_files, sha256_file
 from .ledger import persist
 from .hooks import installed_inputs
@@ -30,7 +30,7 @@ def _findings(values: list[Finding]) -> list[Finding]:
     return values
 
 
-def _spec_patterns(context: Context, registry: Registry, spec) -> list[str]:
+def _spec_patterns(context: Context, registry: Registry, spec: CheckSpec) -> list[str]:
     patterns = list(spec.paths)
     if spec.kind in registry.check_inputs:
         extra_patterns = registry.check_inputs[spec.kind](context, spec)
@@ -48,8 +48,8 @@ def _snapshot(context: Context, registry: Registry, collect: dict | None = None)
     for spec in specs(policy):
         spec_patterns = _spec_patterns(context, registry, spec)
         if collect is not None:
-            collect[spec.id] = [path.relative_to(root).as_posix()
-                                for path in select_files(root, spec_patterns)]
+            collect[spec.id] = sorted(path.relative_to(root).as_posix()
+                                      for path in select_files(root, spec_patterns))
         patterns.extend(spec_patterns)
     files.update(select_files(root, patterns))
     # harness.config_files belongs to the harness plugin's schema; an invalid
@@ -70,9 +70,17 @@ def _prior_check_receipts(root: Path):
     directory = safe_path(root, ".exitzero/runs")
     if not directory.is_dir():
         return
-    files = sorted((p for p in directory.glob("*.json") if p.is_file()),
-                   key=lambda p: p.stat().st_mtime_ns, reverse=True)
-    for path in files:
+
+    def mtime(path: Path) -> int:
+        try:
+            return path.stat().st_mtime_ns
+        except OSError:
+            return -1
+
+    files = sorted((p for p in directory.glob("*.json")
+                    if p.is_file() and not p.is_symlink()),
+                   key=mtime, reverse=True)
+    for path in files[:64]:
         try:
             receipt = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError, UnicodeDecodeError):
@@ -81,45 +89,54 @@ def _prior_check_receipts(root: Path):
             yield receipt
 
 
-def _reusable_checks(root: Path, current_inputs: dict, policy_sha: str, check_specs: list) -> dict:
+def _reusable_checks(root: Path, current_inputs: dict[str, list[str]], current_snapshot: dict[str, str],
+                     policy_sha: str, check_specs: list[CheckSpec]) -> dict[str, tuple[dict, dict]]:
     """Map check id -> (receipt, entry) for checks whose recorded pass still holds.
 
     A prior passing result is reused only when the source receipt ran the same
     tool version against the same policy, the check recorded a per-check input
-    list identical to today's selection, and every listed input still hashes to
-    the recorded value. Added, deleted or modified inputs re-run the check;
-    checks with no declared file inputs can never prove their inputs are stable
-    and always re-run.
+    list identical to today's selection, every listed input still hashes to the
+    recorded value, and the source entry reported no findings. Added, deleted
+    or modified inputs re-run the check; checks with no declared file inputs
+    can never prove their inputs are stable and always re-run.
     """
-    reusable: dict = {}
-    wanted = {spec.id for spec in check_specs}
+    reusable: dict[str, tuple[dict, dict]] = {}
+    wanted = {spec.id for spec in check_specs if current_inputs.get(spec.id)}
     for prior in _prior_check_receipts(root):
         if (prior.get("exit_code") not in (0, 1)
                 or prior.get("tool_version") != __version__
                 or prior.get("policy_sha256") != policy_sha):
             continue
-        prior_inputs = prior.get("inputs")
-        if not isinstance(prior_inputs, dict):
+        run_id = prior.get("run_id")
+        if (not isinstance(run_id, str) or len(run_id) != 32
+                or any(ch not in "0123456789abcdef" for ch in run_id)):
             continue
-        for entry in prior.get("checks", []):
+        findings = prior.get("findings")
+        tainted = {"core.inputs-changed", "core.error", "core.hook-input",
+                   "core.receipt", "core.index-mismatch"}
+        if isinstance(findings, list) and any(
+                isinstance(f, dict) and f.get("rule") in tainted for f in findings):
+            continue
+        prior_inputs = prior.get("inputs")
+        prior_checks = prior.get("checks")
+        if not isinstance(prior_inputs, dict) or not isinstance(prior_checks, list):
+            continue
+        for entry in prior_checks:
             if not isinstance(entry, dict):
                 continue
             check_id = entry.get("id")
             if check_id not in wanted or check_id in reusable:
                 continue
-            recorded = entry.get("inputs")
-            if (entry.get("status") != "passed" or not isinstance(recorded, list)
+            recorded = entry.get("input_files")
+            if (entry.get("status") != "passed" or entry.get("finding_count") != 0
+                    or not isinstance(recorded, list)
                     or not all(isinstance(rel, str) for rel in recorded)):
                 continue
             current = current_inputs.get(check_id, [])
-            if not current or sorted(recorded) != current:
+            if not current or sorted(recorded) != sorted(current):
                 continue
-            try:
-                if all(prior_inputs.get(rel) == sha256_file(safe_path(root, rel))
-                       for rel in current):
-                    reusable[check_id] = (prior, entry)
-            except (ValueError, OSError):
-                continue
+            if all(prior_inputs.get(rel) == current_snapshot.get(rel) for rel in current):
+                reusable[check_id] = (prior, entry)
         if len(reusable) == len(wanted):
             break
     return reusable
@@ -188,15 +205,16 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
             findings.extend(result)
             receipt["checks"].append({"id": name, "kind": "config-lint", "status": "failed" if result else "passed", "finding_count": len(result)})
         if command != "lint-config":
-            reusable = (_reusable_checks(root, check_inputs, receipt["policy_sha256"], checks)
+            reusable = (_reusable_checks(root, check_inputs, receipt["inputs"],
+                                         receipt["policy_sha256"], checks)
                         if reuse and slot is None else {})
             for spec in checks:
                 if spec.id in reusable:
-                    source_receipt, source_entry = reusable[spec.id]
+                    source_receipt, _source_entry = reusable[spec.id]
                     verification_outcomes[spec.id] = "reused"
                     receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": "reused",
-                                              "finding_count": source_entry.get("finding_count", 0),
-                                              "inputs": check_inputs.get(spec.id, []),
+                                              "finding_count": 0,
+                                              "input_files": check_inputs.get(spec.id, []),
                                               "reused_from": source_receipt["run_id"]})
                     continue
                 result = _findings(registry.checks[spec.kind](context, spec))
@@ -205,7 +223,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
                 verification_outcomes[spec.id] = "failed" if errors else "passed"
                 receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": verification_outcomes[spec.id],
                                           "finding_count": len(result),
-                                          "inputs": check_inputs.get(spec.id, [])})
+                                          "input_files": check_inputs.get(spec.id, [])})
             if slot is not None:
                 for handler in registry.hooks.get(slot, []):
                     findings.extend(_findings(handler(context, slot)))

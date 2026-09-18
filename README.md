@@ -191,6 +191,16 @@ inputs re-run the check, and hook gates always execute fully. Reuse is
 evidence, not a new result — the receipt names the source run under
 `reused_from`.
 
+Reuse is deliberately narrow. The source entry must have passed with zero
+findings (warning-carrying passes re-run so findings stay fresh), checks
+with an empty input selection always re-run, and receipts flagging input
+mutation or operational errors are skipped. The reuse key covers core's
+tool version and the policy hash — plugin code changes do not invalidate
+reuse, so re-verify after upgrading plugins. Treat `.exitzero/runs` as a
+trust boundary: receipts are unsigned local evidence, so use `--reuse`
+only where the runs directory is not attacker-writable or restored from
+an untrusted cache.
+
 Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
 through exit codes:
 

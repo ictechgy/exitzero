@@ -333,11 +333,15 @@ class ReuseTests(unittest.TestCase):
         first = self.check_payload()
         self.assertEqual(self.statuses(first), {"dir_a": "passed", "dir_b": "passed"})
         for check in first["checks"]:
-            self.assertEqual(check["inputs"], [f"{check['id'][-1]}/{'x' if check['id'] == 'dir_a' else 'y'}.py"])
+            self.assertEqual(check["input_files"],
+                             [f"{check['id'][-1]}/{'x' if check['id'] == 'dir_a' else 'y'}.py"])
         second = self.check_payload("--reuse")
         self.assertEqual(self.statuses(second), {"dir_a": "reused", "dir_b": "reused"})
         self.assertEqual([check["reused_from"] for check in second["checks"]],
                          [first["run_id"], first["run_id"]])
+        for check in second["checks"]:
+            self.assertEqual(check["finding_count"], 0)
+            self.assertEqual(check["input_files"], [f"{check['id'][-1]}/{'x' if check['id'] == 'dir_a' else 'y'}.py"])
 
     def test_reuse_reruns_only_the_changed_check(self):
         self.setup_dirs()
@@ -396,7 +400,63 @@ class ReuseTests(unittest.TestCase):
         result = self.cli("check", "--reuse")
         self.assertEqual(result.returncode, 0, result.stdout)
         self.assertIn("Reused passing evidence", result.stdout)
-        self.assertIn("dir_a", result.stdout)
+
+    def runs_dir(self):
+        directory = self.root / ".exitzero" / "runs"
+        self.assertTrue(directory.is_dir())
+        return directory
+
+    def craft_only_receipt(self, mutate):
+        for stale in self.runs_dir().glob("*.json"):
+            stale.unlink()
+        self.check_payload()
+        newest = max(self.runs_dir().glob("*.json"),
+                     key=lambda path: path.stat().st_mtime_ns)
+        receipt = json.loads(newest.read_text(encoding="utf-8"))
+        for stale in self.runs_dir().glob("*.json"):
+            stale.unlink()
+        mutate(receipt)
+        newest.write_text(json.dumps(receipt), encoding="utf-8")
+
+    def test_reuse_multi_file_inputs(self):
+        self.setup_dirs()
+        (self.root / "a/extra.py").write_text("e = 1\n", encoding="utf-8")
+        first = self.check_payload()
+        entry = next(c for c in first["checks"] if c["id"] == "dir_a")
+        self.assertEqual(entry["input_files"], ["a/extra.py", "a/x.py"])
+        payload = self.check_payload("--reuse")
+        self.assertEqual(self.statuses(payload), {"dir_a": "reused", "dir_b": "reused"})
+
+    def test_reuse_skips_malformed_prior_receipts(self):
+        self.setup_dirs()
+        self.check_payload()
+        self.craft_only_receipt(lambda receipt: receipt.pop("run_id"))
+        payload = self.check_payload("--reuse")
+        self.assertEqual(self.statuses(payload), {"dir_a": "passed", "dir_b": "passed"})
+        self.craft_only_receipt(lambda receipt: receipt.update(checks=None))
+        payload = self.check_payload("--reuse")
+        self.assertEqual(self.statuses(payload), {"dir_a": "passed", "dir_b": "passed"})
+
+    def test_reuse_rejects_tainted_or_mismatched_receipts(self):
+        self.setup_dirs()
+        self.check_payload()
+        cases = [
+            lambda receipt: receipt.update(tool_version="0.0.0-other"),
+            lambda receipt: receipt["findings"].append(
+                {"rule": "core.inputs-changed", "message": "x", "path": None,
+                 "line": None, "severity": "warning"}),
+            lambda receipt: [entry.update(finding_count=1) for entry in receipt["checks"]],
+        ]
+        for mutate in cases:
+            self.craft_only_receipt(mutate)
+            payload = self.check_payload("--reuse")
+            self.assertEqual(self.statuses(payload), {"dir_a": "passed", "dir_b": "passed"})
+
+    def test_reuse_hook_slot_runs_checks_fully(self):
+        self.setup_dirs()
+        self.check_payload()
+        receipt = run(self.root, "exitzero.toml", "check", slot="CI", reuse=True)
+        self.assertNotIn("reused", {check["status"] for check in receipt["checks"]})
 
 
 class InputDiscoveryTests(unittest.TestCase):

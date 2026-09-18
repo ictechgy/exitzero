@@ -197,7 +197,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     root = Path(args.root).resolve()
     if args.command in {"check", "lint-config"}:
-        receipt = run(root, args.policy, args.command, reuse=getattr(args, "reuse", False))
+        receipt = run(root, args.policy, args.command,
+                      reuse=args.command == "check" and args.reuse)
         emit(receipt, args.format)
         return receipt["exit_code"]
     if args.command == "hooks" and args.hook_command == "run":
