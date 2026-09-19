@@ -82,7 +82,8 @@ class McpGateSessionTests(unittest.TestCase):
                 passed = send(process, {"jsonrpc": "2.0", "id": 4, "method": "tools/call",
                                         "params": {"name": "check_completion", "arguments": {}}})
                 self.assertEqual(passed["result"]["structuredContent"]["verdict"], "passed")
-                self.assertIn("verified", passed["result"]["content"][0]["text"])
+                self.assertIn("no blocking violations", passed["result"]["content"][0]["text"])
+                self.assertNotIn("completion verified", passed["result"]["content"][0]["text"])
             finally:
                 process.stdin.close()
                 self.assertEqual(process.wait(timeout=10.0), 0)
