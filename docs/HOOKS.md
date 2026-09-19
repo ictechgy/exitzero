@@ -130,6 +130,49 @@ but trust review applies: persist trust in an interactive session first, or
 pass `--dangerously-bypass-hook-trust` for automation that vets its hook
 sources. Live Claude Code verification has not been performed.
 
+## Gemini CLI
+
+```sh
+exitzero hooks install --adapter gemini
+exitzero lint-config
+```
+
+Gemini CLI uses the same nested hook list shape, stored in shared
+`.gemini/settings.json` under the `AfterAgent` event (its Stop equivalent),
+so drift is tracked per managed entry like Claude's file. The stdin/stdout
+contract is also identical: `{"decision": "block", "reason": ...}` on
+failure, `{}` on pass, exit 2 for operational errors. Gemini reads project
+hooks without a trust prompt — review `.gemini/settings.json` before the
+next session. `gemini hooks migrate --from-claude` maps `Stop` to
+`AfterAgent`, matching this adapter's layout. Protocol behavior is covered
+by tests only — a live session could not be run because the installed
+gemini-cli 0.x build rejects this account tier (IneligibleTierError points
+at Antigravity instead).
+
+## Antigravity (agy)
+
+```sh
+exitzero hooks install --adapter agy
+exitzero lint-config
+```
+
+Antigravity keeps project hooks in `.agents/hooks.json` as a named-hook map:
+the installer adds one `{type: "command", command, timeout: 120}` entry
+under the `exitzero` name's flat `Stop` list, preserving foreign hook names
+and non-Stop events under the same name. Drift is tracked per managed entry
+like the other shared files. The stdin contract is the same JSON object,
+but Antigravity's stop-blocking decision word is `"continue"` rather than
+`"block"`: a failed gate returns `{"decision": "continue", "reason": ...}`
+and the reason is injected as a system message, `{}` lets the agent stop.
+Hook commands run synchronously and block the agent loop.
+
+Live verification on Antigravity CLI 1.2.7 (2026-09-19) confirmed the
+interactive session fires the installed `Stop` hook: a failing gate
+returned `continue`, the agent read the receipt, repaired the file, fixed
+the drifted hook entry and stopped again into a passing gate. Headless
+`agy -p` loads `hooks.json` but does not execute hooks — the same gap as
+Cursor's `-p`; use tool-event hooks or the CI slot in pipelines.
+
 ## Git pre-commit
 
 ```sh
@@ -210,3 +253,20 @@ Verified live 2026-09-19 through the official MCP Inspector client over
 real stdio JSON-RPC: `tools/list` discovers `check_completion`, and the
 tool returns a structured `passed`/`failed` verdict plus receipt path on
 both clean and violating trees.
+
+Two real agent hosts verified the same day, both calling the tool and
+relaying the verdict correctly in headless mode:
+
+- **Grok CLI** — register with
+  `grok mcp add exitzero-gate <path-to>/bin/exitzero --scope project -- plugin mcp-gate`
+  (writes `[mcp_servers.exitzero-gate]` to `.grok/config.toml`). Project-scope
+  servers only load under `grok -p ... --trust`; the agent invoked
+  `exitzero-gate__check_completion` and reported `failed` on a broken tree
+  and `passed` after repair.
+- **OpenCode** — `opencode.json` block
+  `{"mcp": {"exitzero-gate": {"type": "local", "command": ["<path-to>/bin/exitzero", "plugin", "mcp-gate"], "enabled": true}}}`;
+  `opencode mcp list` shows `connected` and `opencode run` invoked
+  `exitzero-gate_check_completion` with both verdicts observed.
+
+Neither host offers a blocking stop hook, so the gate stays advisory there:
+the verdict is real evidence only because the agent chose to call it.

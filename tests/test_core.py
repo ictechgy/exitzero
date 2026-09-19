@@ -861,9 +861,9 @@ class AdapterHookTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         return payload, [f["rule"] for f in payload["findings"]]
 
-    def stop_entries(self, path):
+    def stop_entries(self, path, event="Stop"):
         data = json.loads(path.read_text(encoding="utf-8"))
-        return [entry for group in data["hooks"]["Stop"] for entry in group["hooks"]]
+        return [entry for group in data["hooks"][event] for entry in group["hooks"]]
 
     def test_claude_install_writes_nested_stop_entry_and_manifest_digest(self):
         self.init()
@@ -989,9 +989,108 @@ class AdapterHookTests(unittest.TestCase):
         self.assertEqual(payload["decision"], "block")
         self.assertIn("exitzero failed", payload["reason"])
 
+    def test_gemini_install_writes_afteragent_entry_and_manifest_digest(self):
+        self.init()
+        self.install("gemini")
+        settings = self.root / ".gemini/settings.json"
+        entries = self.stop_entries(settings, "AfterAgent")
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["type"], "command")
+        self.assertEqual(entry["timeout"], 120)
+        self.assertIn("hooks run --adapter gemini --event stop", entry["command"])
+        manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
+        self.assertIn(".gemini/settings.json", manifest["entries"])
+        self.assertNotIn(".gemini/settings.json", manifest["files"])
+
+    def test_gemini_failure_returns_decision_block_and_pass_returns_empty(self):
+        self.init()
+        self.break_source()
+        result = self.run_hook("gemini", {"session_id": "abc"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("Receipt:", payload["reason"])
+        (self.root / "broken.py").write_text("def broken():\n    return 1\n")
+        result = self.run_hook("gemini", {"session_id": "abc"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+
+    def test_gemini_lint_flags_managed_entry_edit(self):
+        self.init()
+        self.install("gemini")
+        settings = self.root / ".gemini/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["hooks"]["AfterAgent"][0]["hooks"][0]["timeout"] = 30
+        data["theme"] = "dark"
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertEqual(payload["exit_code"], 1)
+        self.assertIn("harness.hooks-drift", rules)
+
+    def test_agy_install_writes_named_flat_stop_entry_and_digest(self):
+        self.init()
+        self.install("agy")
+        data = json.loads((self.root / ".agents/hooks.json").read_text(encoding="utf-8"))
+        entries = data["exitzero"]["Stop"]
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["type"], "command")
+        self.assertEqual(entry["timeout"], 120)
+        self.assertIn("hooks run --adapter agy --event stop", entry["command"])
+        manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
+        self.assertIn(".agents/hooks.json", manifest["entries"])
+
+    def test_agy_failure_returns_decision_continue_and_pass_returns_empty(self):
+        self.init()
+        self.break_source()
+        result = self.run_hook("agy", {"executionNum": 1, "terminationReason": "model_stop"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["decision"], "continue")
+        self.assertIn("Receipt:", payload["reason"])
+        (self.root / "broken.py").write_text("def broken():\n    return 1\n")
+        result = self.run_hook("agy", {"executionNum": 2, "terminationReason": "model_stop"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+
+    def test_agy_install_preserves_foreign_names_and_own_other_events(self):
+        self.init()
+        agents = self.root / ".agents"
+        agents.mkdir()
+        (agents / "hooks.json").write_text(json.dumps({
+            "foreign": {"Stop": [{"type": "command", "command": "keep-me"}]},
+            "exitzero": {"enabled": True,
+                         "PreInvocation": [{"type": "command", "command": "echo pre"}],
+                         "Stop": [{"type": "command",
+                                   "command": "/old exitzero hooks run --adapter agy --event stop"},
+                                  {"type": "command", "command": "foreign-under-our-name"}]}}),
+            encoding="utf-8")
+        self.install("agy")
+        data = json.loads((agents / "hooks.json").read_text(encoding="utf-8"))
+        self.assertEqual(data["foreign"]["Stop"][0]["command"], "keep-me")
+        self.assertTrue(data["exitzero"]["enabled"])
+        self.assertEqual(data["exitzero"]["PreInvocation"][0]["command"], "echo pre")
+        commands = [entry["command"] for entry in data["exitzero"]["Stop"]]
+        self.assertEqual(len(commands), 2)
+        self.assertIn("foreign-under-our-name", commands)
+        self.assertNotIn("/old exitzero hooks run --adapter agy --event stop", commands)
+
+    def test_agy_lint_flags_managed_entry_edit(self):
+        self.init()
+        self.install("agy")
+        path = self.root / ".agents/hooks.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["exitzero"]["Stop"][0]["timeout"] = 30
+        data["foreign-new"] = {"Stop": [{"type": "command", "command": "x"}]}
+        path.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertEqual(payload["exit_code"], 1)
+        self.assertIn("harness.hooks-drift", rules)
+
     def test_invalid_json_persists_receipt_and_exits_two(self):
         self.init()
-        for adapter in ("claude", "codex"):
+        for adapter in ("claude", "codex", "gemini", "agy"):
             result = self.cli("hooks", "run", "--adapter", adapter, "--event", "stop",
                               stdin="{not json")
             self.assertEqual(result.returncode, 2, adapter + result.stdout + result.stderr)
@@ -1001,7 +1100,7 @@ class AdapterHookTests(unittest.TestCase):
 
     def test_adapter_rejects_unsupported_events(self):
         self.init()
-        for adapter in ("claude", "codex"):
+        for adapter in ("claude", "codex", "gemini", "agy"):
             result = self.cli("hooks", "run", "--adapter", adapter, "--event", "preToolUse",
                               stdin="{}")
             self.assertEqual(result.returncode, 2, adapter)

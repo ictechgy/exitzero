@@ -174,6 +174,8 @@ exitzero lint-config --format json
 exitzero hooks install --adapter cursor
 exitzero hooks install --adapter claude
 exitzero hooks install --adapter codex
+exitzero hooks install --adapter gemini
+exitzero hooks install --adapter agy
 exitzero hooks install --adapter pre-commit
 exitzero hooks run --slot CI --format json
 exitzero report --format json
