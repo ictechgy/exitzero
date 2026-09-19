@@ -156,14 +156,15 @@ def _requirement_findings(receipt: dict, outcomes: dict[str, str], valid: bool) 
         statuses = [outcomes.get(check) for check in requirement["checks"]]
         status = "unverified"
         if receipt["command"] not in {"lint-config", "doctor"}:
-            if "failed" in statuses:
+            complete = valid and bool(statuses) and all(value in ("passed", "reused", "failed") for value in statuses)
+            if complete and "failed" in statuses:
                 status = "failed"
                 blocking = any(check["id"] in requirement["checks"] and check.get("blocking")
                                for check in receipt["checks"])
                 findings.append(Finding("core.requirement-failed",
                                         f"Requirement {requirement['id']} has failed mapped checks; inspect their findings.",
                                         severity="error" if blocking else "warning"))
-            elif valid and statuses and all(value in ("passed", "reused") for value in statuses):
+            elif complete:
                 status = "checks_passed"
             if status == "unverified":
                 findings.append(Finding("core.requirement-unverified",
@@ -293,7 +294,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
                     # Nothing in this check's scope changed: vacuous pass with
                     # an empty input list so the receipt shows no files were
                     # examined rather than implying a fresh full verification.
-                    verification_outcomes[spec.id] = "passed"
+                    verification_outcomes[spec.id] = "unverified"
                     receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": "passed",
                                               "enforcement": spec.enforcement, "blocking": False,
                                               "finding_count": 0, "input_files": []})

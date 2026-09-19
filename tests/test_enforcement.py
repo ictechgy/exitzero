@@ -88,6 +88,14 @@ class EnforcementTests(unittest.TestCase):
         self.assertEqual(receipt['checks'][0]['status'], 'failed')
         self.assertEqual(receipt['checks'][0]['enforcement'], 'warn')
 
+    def test_scoped_out_required_check_is_unverified_and_blocks(self):
+        self.configure(extra='\n[[requirements]]\nid = "done"\ndescription = "Done"\nchecks = ["sample"]\n')
+        with patch('exitzero.runner._diff_changed_files', return_value=[]):
+            receipt = self.gate(diff='base')
+        self.assertEqual(receipt['exit_code'], 1)
+        self.assertEqual(receipt['requirements'][0]['status'], 'unverified')
+        self.assertEqual(receipt['checks'][0]['input_files'], [])
+
     def test_mutating_inputs_and_exceptions_still_block(self):
         registry = Registry()
         def mutate(context, spec):

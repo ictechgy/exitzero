@@ -109,6 +109,21 @@ class DoctorTests(unittest.TestCase):
         self.assertIn("doctor.managed-only", {f["rule"] for f in receipt["findings"]})
         self.assertNotIn("private-settings-marker", json.dumps(receipt))
 
+    def test_disabled_hooks_cannot_be_certified_by_reinstallation(self):
+        self.cli("hooks", "install", "--adapter", "claude")
+        path = self.root / ".claude/settings.json"
+        data = json.loads(path.read_text())
+        data["hooks"]["Stop"][0]["disabled"] = True
+        path.write_text(json.dumps(data))
+        self.cli("hooks", "install", "--adapter", "claude")
+        receipt = self.doctor(expected=1)
+        self.assertEqual(self.row(receipt, "claude")["state"], "misconfigured")
+        data["hooks"]["Stop"][0].pop("disabled")
+        data["disableAllHooks"] = True
+        path.write_text(json.dumps(data))
+        receipt = self.doctor(expected=1)
+        self.assertIn("doctor.hooks-disabled", {f["rule"] for f in receipt["findings"]})
+
     def test_drift_and_wrong_policy_are_reported(self):
         self.cli("hooks", "install", "--adapter", "cursor")
         self.edit_cursor(command="private-command-marker")

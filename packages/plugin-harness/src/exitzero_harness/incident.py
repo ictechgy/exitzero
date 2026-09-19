@@ -110,5 +110,5 @@ The generator does not infer correct assertions or prove semantic test quality.
     except (OSError, ValueError):
         print("incident-kit: unable to generate; check id, paths, verify plugin, policy and AGENTS markers. Existing kits are not overwritten; inspect any partial output after an I/O error.")
         return 2
-    print(f"Created {relative}; checks and requirement mapping added. Run exitzero check: the unfinished tests must fail.")
+    print(f"Created {relative}; checks and requirement mapping added. Run {prefix} check: the unfinished tests must fail.")
     return 0

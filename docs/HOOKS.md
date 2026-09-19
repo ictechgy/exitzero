@@ -341,6 +341,8 @@ receipt's `diff` field records the range. An unresolvable ref or missing git
 is an operational error (exit 2). `--diff` narrows verification scope — it is
 evidence about the changed set, not a substitute for the full gate on release
 paths.
+Mapped requirements whose checks were scoped out remain `unverified` and block;
+use the full gate when every acceptance requirement needs execution evidence.
 
 `exitzero report --format intoto` exports the latest receipt wrapped in an
 in-toto Statement v1 (`predicateType: https://exitzero.dev/attestations/gate/v1`)

@@ -60,7 +60,7 @@ def _entries(data: dict, adapter: str) -> list[dict]:
         event = "stop" if adapter == "cursor" else SETTINGS_ADAPTERS[adapter][1]
         entries = hooks.get(event, []) if isinstance(hooks, dict) else []
         if adapter != "cursor" and isinstance(entries, list):
-            entries = [entry for group in entries if isinstance(group, dict)
+            entries = [entry for group in entries if isinstance(group, dict) and group.get("disabled") is not True
                        for entry in (group.get("hooks") if isinstance(group.get("hooks"), list) else [])]
     return [entry for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
 
@@ -111,6 +111,10 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
                     findings.append(Finding("doctor.hook-config", item["detail"], relative))
                     continue
                 expected = expected_adapter_command(context.root, context.policy_path, adapter)
+                if data.get("disableAllHooks") is True and relative in recorded:
+                    item.update(state="misconfigured", detail="Project configuration disables hooks.",
+                                next_step="Review disableAllHooks and the effective client settings before relying on this hook.")
+                    findings.append(Finding("doctor.hooks-disabled", item["detail"], relative))
                 owned = [entry for entry in _entries(data, adapter)
                          if entry.get("command") == expected and entry.get("type", "command") == "command"]
                 if relative in recorded and not owned:
