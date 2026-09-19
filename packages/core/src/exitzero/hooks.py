@@ -29,6 +29,7 @@ ADAPTER_EVENTS = {
     "claude": STOP_ONLY_EVENTS,
     "codex": STOP_ONLY_EVENTS,
     "gemini": STOP_ONLY_EVENTS,
+    "agy": STOP_ONLY_EVENTS,
 }
 # Hook runtimes read these entry fields; failClosed keeps hook failures from
 # proceeding silently, and timeout bounds a hung gate command.
@@ -37,6 +38,7 @@ HOOK_MANAGED_NOTE = {
     "claude": "Approve or trust the project hook on the next Claude Code session; managed allowManagedHooksOnly policies can disable project hooks entirely.",
     "codex": "Codex gates hooks behind trust review; run /hooks or approve the hook prompt before the stop gate can fire.",
     "gemini": "Gemini reads project hooks from .gemini/settings.json without a trust prompt; review the file before the next session.",
+    "agy": "Antigravity reads project hooks from .agents/hooks.json; commands run synchronously and block the agent loop.",
     "cursor": "",
 }
 # Nested-list adapters share one file layout but different settings keys:
@@ -46,6 +48,8 @@ SETTINGS_ADAPTERS = {
     "codex": (".codex/hooks.json", "Stop", False),
     "gemini": (".gemini/settings.json", "AfterAgent", True),
 }
+# Antigravity keeps hooks in a named-hook map: {name: {Event: [flat entries]}}.
+AGY_HOOK_NAME = "exitzero"
 
 
 def _launcher() -> list[str]:
@@ -204,6 +208,38 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
             entry = next(entry for group in data["hooks"][event]
                          for entry in group["hooks"] if entry.get("command") == command)
             entry_digest = _entry_digest(entry)
+    elif adapter == "agy":
+        # Named-hook map under the project customization root. Other names and
+        # non-Stop events under our name are preserved; stale exitzero Stop
+        # entries are pruned so reinstalls do not stack.
+        relative = ".agents/hooks.json"
+        path = safe_path(root, relative)
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                raise ValueError("Invalid existing hook configuration") from None
+            if not isinstance(data, dict):
+                raise ValueError("Existing hook configuration must be a JSON object")
+        else:
+            data = {}
+        command = expected_adapter_command(root, policy_path, adapter)
+        spec = data.setdefault(AGY_HOOK_NAME, {})
+        if not isinstance(spec, dict):
+            raise ValueError(f"Existing '{AGY_HOOK_NAME}' hook must be an object")
+        entries = spec.setdefault("Stop", [])
+        if not isinstance(entries, list):
+            raise ValueError(f"Existing '{AGY_HOOK_NAME}' Stop hooks must be a list")
+        entries[:] = [entry for entry in entries
+                      if not (isinstance(entry, dict) and entry.get("command") != command
+                              and _exitzero_managed(adapter, entry.get("command")))]
+        owned = next((entry for entry in entries
+                      if isinstance(entry, dict) and entry.get("command") == command), None)
+        if owned is None:
+            owned = {"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SECONDS}
+            entries.append(owned)
+        content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        entry_digest = _entry_digest(owned)
     else:
         # Git executes hooks relative to the worktree root. Respect custom hook paths.
         result = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks/pre-commit"],
@@ -251,6 +287,17 @@ def _settings_stop_entries(path: Path, event: str) -> list[dict]:
     return entries
 
 
+def _agy_stop_entries(path: Path) -> list[dict]:
+    """Flat Stop entries under the exitzero name in .agents/hooks.json."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return []
+    spec = data.get(AGY_HOOK_NAME) if isinstance(data, dict) else None
+    entries = spec.get("Stop") if isinstance(spec, dict) else None
+    return [entry for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
+
+
 def lint_installed(context: Context) -> list[Finding]:
     manifest = _manifest(context.root)
     findings = []
@@ -262,8 +309,11 @@ def lint_installed(context: Context) -> list[Finding]:
                     in SETTINGS_ADAPTERS.values() if shared}
     for relative, digest in manifest["entries"].items():
         path = safe_path(context.root, relative)
-        entries = (_settings_stop_entries(path, entry_events[relative])
-                   if path.is_file() and relative in entry_events else [])
+        if relative == ".agents/hooks.json":
+            entries = _agy_stop_entries(path) if path.is_file() else []
+        else:
+            entries = (_settings_stop_entries(path, entry_events[relative])
+                       if path.is_file() and relative in entry_events else [])
         if not any(_entry_digest(entry) == digest for entry in entries):
             findings.append(Finding("harness.hooks-drift",
                                     "Managed hook entry changed or disappeared inside a shared config file; review and reinstall it.",
@@ -361,15 +411,15 @@ def cursor_response(receipt: dict, event: str, payload: dict) -> dict:
     return {}
 
 
-def stop_block_response(receipt: dict) -> dict:
-    """Claude Code/Codex/Gemini Stop semantics: decision block re-injects feedback.
+def stop_block_response(receipt: dict, decision: str = "block") -> dict:
+    """Nested-contract stop semantics: the decision word re-injects feedback.
 
-    All three harnesses share the {decision, reason} output contract and bound
-    consecutive stop blocks natively (Claude Code caps at eight, Codex re-trusts
-    hook edits), so the adapter always reports an honest gate result and lets
-    the platform bound the repair loop. A gate that could not run (exit 2) is
-    still a failure to prove completion, so it blocks too.
+    Claude Code, Codex and Gemini block with "block"; Antigravity continues
+    with "continue". All bound consecutive stop blocks natively, so the
+    adapter always reports an honest gate result and lets the platform bound
+    the repair loop. A gate that could not run (exit 2) is still a failure
+    to prove completion, so it blocks too.
     """
     if receipt["exit_code"] == 0:
         return {}
-    return {"decision": "block", "reason": _cursor_failure_feedback(receipt)}
+    return {"decision": decision, "reason": _cursor_failure_feedback(receipt)}

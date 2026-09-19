@@ -144,7 +144,34 @@ contract is also identical: `{"decision": "block", "reason": ...}` on
 failure, `{}` on pass, exit 2 for operational errors. Gemini reads project
 hooks without a trust prompt — review `.gemini/settings.json` before the
 next session. `gemini hooks migrate --from-claude` maps `Stop` to
-`AfterAgent`, matching this adapter's layout.
+`AfterAgent`, matching this adapter's layout. Protocol behavior is covered
+by tests only — a live session could not be run because the installed
+gemini-cli 0.x build rejects this account tier (IneligibleTierError points
+at Antigravity instead).
+
+## Antigravity (agy)
+
+```sh
+exitzero hooks install --adapter agy
+exitzero lint-config
+```
+
+Antigravity keeps project hooks in `.agents/hooks.json` as a named-hook map:
+the installer adds one `{type: "command", command, timeout: 120}` entry
+under the `exitzero` name's flat `Stop` list, preserving foreign hook names
+and non-Stop events under the same name. Drift is tracked per managed entry
+like the other shared files. The stdin contract is the same JSON object,
+but Antigravity's stop-blocking decision word is `"continue"` rather than
+`"block"`: a failed gate returns `{"decision": "continue", "reason": ...}`
+and the reason is injected as a system message, `{}` lets the agent stop.
+Hook commands run synchronously and block the agent loop.
+
+Live verification on Antigravity CLI 1.2.7 (2026-09-19) confirmed the
+interactive session fires the installed `Stop` hook: a failing gate
+returned `continue`, the agent read the receipt, repaired the file, fixed
+the drifted hook entry and stopped again into a passing gate. Headless
+`agy -p` loads `hooks.json` but does not execute hooks — the same gap as
+Cursor's `-p`; use tool-event hooks or the CI slot in pipelines.
 
 ## Git pre-commit
 
