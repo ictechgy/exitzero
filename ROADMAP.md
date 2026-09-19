@@ -33,3 +33,13 @@
 Before broad adoption: test real Cursor releases, improve Python import analysis,
 add richer machine-output integrations, and measure check latency on larger repos.
 No claim of replacing full static analysis, human review or commercial review tools.
+
+## Post-0.3.0 source additions
+
+Implemented: project doctor, incident regression kits, check-level warn/block
+policy, Node command profiles, Copilot CLI and Git pre-push adapters, constrained
+MCP argument rules, exact receipt exports and optional CI attestation guidance.
+These remain source features until the next package release. Copilot has protocol
+tests but no live-session evidence; the attestation workflow is an example, not
+an enabled hosted signing deployment. Cloud control planes, generic shell-command
+inspection and automatic rollback remain outside this implementation.
