@@ -1,6 +1,53 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — released 2026-09-19
+
+**Multi-adapter hooks and completion coverage**
+
+- `hooks install --adapter claude` writes a nested `hooks.Stop[].hooks[]`
+  entry into `.claude/settings.json`; `--adapter codex` writes
+  `.codex/hooks.json`. Both adapters answer `{}` on pass and
+  `{"decision": "block", "reason": ...}` on any nonzero gate. Generated
+  entries carry `failClosed: true` and `timeout: 120`; reinstalls prune
+  stale exitzero entries without touching foreign hooks; lint tracks
+  managed entries per digest and warns when `allowManagedHooksOnly`
+  would disable the project gate.
+- `python.test-integrity` compares worktree test files against a git
+  `base` (default `HEAD`): deleted or moved-out test files, removed test
+  cases, net assertion loss and new skip/xfail suppression markers are
+  findings. Options: `allow_deletions`, `allow_skip_markers`,
+  `max_removed_assertions`. Declares `reuse = false` — its correctness
+  depends on moving git state outside hashed inputs.
+- Per-check `reuse = false` in `[[checks]]` excludes a check from
+  `--reuse` result caching while still recording its selected inputs.
+- `check --diff REF` narrows every check's selection and the stability
+  snapshot to paths changed against a git ref or range (including deleted
+  paths, so scoped integrity checks still see removals); a scope with no
+  changed files records a vacuous pass and the receipt carries `diff`.
+- `report --format intoto` exports the latest receipt wrapped in an
+  unsigned in-toto Statement v1 (`predicateType:
+  https://exitzero.dev/attestations/gate/v1`).
+- `harness-eval` turns record `transitions` from the second turn onward —
+  `fail_to_pass`, `pass_to_pass`, `pass_to_fail`, `fail_to_fail` over
+  check ids.
+- `exitzero plugin mcp-gate` serves the completion gate over stdio
+  JSON-RPC: the `check_completion` tool runs the real `check` and returns
+  the verdict plus the receipt reference (gate failure is a verdict;
+  operational exit 2 is a tool error). `agent-plugin/` packages it with a
+  skill and `.mcp.json` for hosts without stop-hook support — advisory
+  by design.
+
+**Review-hardening follow-ups**
+
+- `check --diff` keeps deleted paths in the changed set (scoped
+  `python.test-integrity` can no longer be bypassed by deleting tests)
+  and escapes glob metacharacters in narrowed literal paths; `Context`
+  gains a `diff` field so plugins can treat empty selections as vacuous
+  under scoped runs.
+- Hook entry pruning requires the exitzero launcher and only removes
+  groups emptied by pruning — foreign hook-shaped entries and pre-empty
+  groups are preserved; `match_path` rejects candidates under excluded
+  segments for `select_files` parity.
 
 Security and reliability hardening from a three-track review of the gateway,
 ledger, core and plugins:
