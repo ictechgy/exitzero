@@ -243,7 +243,8 @@ Path roots are relative to `upstream.cwd` (the invocation root by default).
 Absolute argument paths must be inside that directory and one allowed root.
 Traversal, symlinks, credential-like paths and shell/URL expansion syntax are
 rejected; inputs must be literal paths. HTTPS origins match scheme, normalized
-host and port exactly, without userinfo. Invalid/missing/extra arguments are
+ASCII host and port exactly, without userinfo (use explicit punycode for IDNs).
+Invalid/missing/extra arguments are
 denied before the upstream sees the call; audit events record the decision and
 `argument-policy` reason, never the argument values.
 

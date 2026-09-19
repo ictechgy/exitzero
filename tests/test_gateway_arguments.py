@@ -39,7 +39,7 @@ class ArgumentPolicyTests(unittest.TestCase):
         self.assertTrue(allowed_arguments(config, 'fetch', {'url': 'https://API.example.com:443/path?q=1'}))
         for url in ('http://api.example.com', 'https://api.example.com.evil.invalid',
                     'https://api.example.com@evil.invalid', 'https://user@api.example.com',
-                    'https://api.example.com:444/x', 'https://api.example.com\\@evil.invalid',
+                    'https://api.example.com:444/x', 'https://api.example.com:0/x', 'https://api.example.com\\@evil.invalid',
                     ' https://api.example.com', 'https://%61pi.example.com'):
             self.assertFalse(allowed_arguments(config, 'fetch', {'url': url}))
 

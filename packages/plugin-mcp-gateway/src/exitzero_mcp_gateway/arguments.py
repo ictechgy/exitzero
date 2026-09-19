@@ -6,13 +6,14 @@ from exitzero.services import safe_path
 
 
 def _origin(value: str) -> tuple[str, str, int]:
-    if not isinstance(value, str) or not value or any(c.isspace() or ord(c) < 32 for c in value) or "\\" in value:
+    if not isinstance(value, str) or not value or any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in value) or "\\" in value:
         raise ValueError("Invalid HTTPS URL")
     parts = urlsplit(value)
     host = parts.hostname
-    if parts.scheme != "https" or not host or parts.username is not None or parts.password is not None or "%" in host:
+    if (parts.scheme != "https" or not host or not host.isascii() or parts.username is not None
+            or parts.password is not None or "%" in host):
         raise ValueError("Invalid HTTPS origin")
-    return "https", host.encode("idna").decode("ascii").lower(), parts.port or 443
+    return "https", host.lower(), 443 if parts.port is None else parts.port
 
 
 def load_rules(values: object, cwd: Path) -> dict:
