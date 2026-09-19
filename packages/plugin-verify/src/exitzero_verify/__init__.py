@@ -48,7 +48,9 @@ def _files(context: Context, spec: CheckSpec) -> list[Path]:
     from exitzero.services import select_files
 
     selected = select_files(context.root, patterns)
-    if not selected:
+    if not selected and context.diff is None:
+        # A full run selecting nothing means a misconfigured scope; under
+        # --diff an empty selection just means every matched path is gone.
         raise ValueError(f"check {spec.id!r} selected no files")
     return [Path(path) for path in selected]
 
