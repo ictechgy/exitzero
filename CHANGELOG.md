@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `init --profile node` connects existing test/lint/type-check commands with
+  JS/TS, manifests, lockfiles and configuration inputs. Generation is offline,
+  preserves existing policy, and never installs packages or runs commands.
+
 - Per-check `enforcement = "warn" | "block"` separates observed failure from
   gate disposition. Receipts retain failed checks/requirements while marking
   advisory findings; execution, policy and receipt errors stay blocking.

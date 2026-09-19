@@ -119,8 +119,8 @@ exitzero init --profile python \
 연산자는 거부됩니다. `init`은 명령을 기록만 하므로 실행하지 않습니다.
 정책이 결과 argv를 저장하므로 명령 인자에 자격증명을 넣지 마세요. 기존
 정책은 절대 덮어쓰지 않으며, 생성 옵션은 `init --sync`와 함께 쓸 수
-없습니다. `--profile python` 없이는 `init`은 구문 전용 호환 시작점으로
-유지됩니다. 생성된 command 검사는 영수증을 위해 Python 파일을
+없습니다. 기본 프로필의 `init`은 구문 전용 호환 시작점으로 유지됩니다.
+Python 프로필에서 생성된 command 검사는 영수증을 위해 Python 파일을
 핑거프린트합니다. 테스트나 리뷰 명령이 JSON, YAML, Markdown 등 비-Python
 입력에 의존한다면 정책에서 해당 검사의 `paths`에 그 파일들을 포함하세요.
 
@@ -130,6 +130,32 @@ exitzero init --profile python \
 ./bin/exitzero --root examples/sample check
 ./bin/exitzero --root examples/sample lint-config
 ```
+
+## Node 저장소용 검사 생성
+
+소스 체크아웃에서 기존 `package.json`과 test 스크립트가 있는 프로젝트에 적용합니다:
+
+```sh
+exitzero init --profile node
+# 위 명령 대신 기존 lint/typecheck 스크립트까지 명시하려면:
+exitzero init --profile node --source-root src \
+  --test-command 'npm test' \
+  --lint-command 'npm run lint' \
+  --typecheck-command 'npm run typecheck' \
+  --input-path 'fixtures/**/*.json'
+```
+
+두 명령은 대안이며 연속 실행하지 않습니다. 기본 테스트 명령은 `npm test`이고,
+`--test-command`로 pnpm·yarn·`node --test` 등을 지정할 수 있습니다. lint와
+타입 검사는 지정했을 때만 추가합니다. 생성 중 명령 실행·패키지 설치를 하지 않고
+Python 샘플도 만들지 않습니다. 도구 누락·스크립트 실패는 게이트 실패로 남깁니다.
+사용자 지정 테스트 명령을 주면 `package.json` 없이도 초기화할 수 있습니다.
+
+JS/TS와 모듈 변형, 테스트 디렉터리, 루트 도구 설정, package 파일·잠금 파일·
+TS/JS 설정 등을 영수증 입력으로 기록합니다. 기본은 저장소 전체 범위이며
+`--source-root`를 반복해 범위를 지정하고, 추가 입력은 `--input-path`로 넣으세요.
+설치된 의존성과 환경까지 해시하는 것은 아니므로 생성된 명령은 `reuse = false`로
+매번 실행합니다. 실제 분석은 프로젝트의 기존 JS/TS 도구가 담당합니다.
 
 ## 정책에 리뷰 요구사항 담기
 

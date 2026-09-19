@@ -14,7 +14,7 @@ from .doctor import ADAPTERS
 from .files import safe_path, select_files, validate_relative, write_atomic
 from .hooks import ADAPTER_EVENTS, HOOK_MANAGED_NOTE, cursor_response, install, stop_block_response
 from .loader import discover
-from .policy import DEFAULT_POLICY, load_policy, python_profile_policy, sync_agents
+from .policy import DEFAULT_POLICY, load_policy, node_profile_policy, python_profile_policy, sync_agents
 from .runner import run
 
 
@@ -26,16 +26,20 @@ def parser() -> argparse.ArgumentParser:
     commands = cli.add_subparsers(dest="command", required=True)
     init = commands.add_parser("init", help="Create policy and managed AGENTS section")
     init.add_argument("--sync", action="store_true", help="Regenerate only the managed AGENTS section")
-    init.add_argument("--profile", choices=("default", "python"), default="default",
-                      help="Policy starter profile (python adds static checks and command slots)")
+    init.add_argument("--profile", choices=("default", "python", "node"), default="default",
+                      help="Policy starter profile (python: static checks; node: existing tool commands)")
     init.add_argument("--source-root", action="append", default=[], metavar="PATH",
-                      help="Python source root; repeat for multiple roots")
+                      help="Source root; repeat for multiple roots")
     init.add_argument("--allow-module", action="append", default=[], metavar="MODULE",
                       help="External Python module trusted by the imports check")
     init.add_argument("--test-command", metavar="COMMAND",
                       help="Shell-free test command to store as argv")
     init.add_argument("--review-command", action="append", default=[], metavar="COMMAND",
                       help="Shell-free review command; repeatable")
+    init.add_argument("--lint-command", metavar="COMMAND", help="Node profile lint command")
+    init.add_argument("--typecheck-command", metavar="COMMAND", help="Node profile type-check command")
+    init.add_argument("--input-path", action="append", default=[], metavar="GLOB",
+                      help="Additional Node input glob, for example JSON test fixtures; repeatable")
     for name in ("check", "lint-config"):
         child = commands.add_parser(name)
         child.add_argument("--format", choices=("human", "json", "sarif"), default="human")
@@ -207,12 +211,17 @@ def _init_generation(args: argparse.Namespace) -> str:
     generation_requested = bool(
         args.profile != "default" or args.source_root or args.allow_module
         or args.test_command is not None or args.review_command
+        or args.lint_command is not None or args.typecheck_command is not None or args.input_path
     )
     if args.sync and generation_requested:
         raise ValueError("init --sync cannot be combined with policy generation options")
     if args.profile == "default" and generation_requested:
-        raise ValueError("--profile python is required with generation options")
-    if args.profile != "python":
+        raise ValueError("--profile python or node is required with generation options")
+    if args.profile != "node" and (args.lint_command is not None or args.typecheck_command is not None or args.input_path):
+        raise ValueError("lint/typecheck commands and input-path require --profile node")
+    if args.profile == "node" and args.allow_module:
+        raise ValueError("allow-module only applies to --profile python")
+    if args.profile == "default":
         return DEFAULT_POLICY
     roots = args.source_root or ["."]
     for root in roots:
@@ -229,6 +238,19 @@ def _init_generation(args: argparse.Namespace) -> str:
         if argv is None:
             raise ValueError("review commands must be non-empty strings")
         review_argvs.append(argv)
+    if args.profile == "node":
+        if args.test_command is None and not safe_path(Path(args.root).resolve(), "package.json").is_file():
+            raise ValueError("The default npm test command requires a local package.json; supply --test-command otherwise")
+        commands = [("test-command", test_argv if test_argv is not None else ["npm", "test"])]
+        for check_id, value in (("lint-command", args.lint_command), ("typecheck-command", args.typecheck_command)):
+            command = _parse_init_command(value)
+            if command is not None:
+                commands.append((check_id, command))
+        commands.extend((f"review-{index}", command) for index, command in enumerate(review_argvs, 1))
+        for pattern in args.input_path:
+            validate_relative(pattern)
+        select_files(Path(args.root).resolve(), args.input_path)
+        return node_profile_policy(roots, commands, args.input_path)
     return python_profile_policy(roots, args.allow_module, test_argv, review_argvs)
 
 
@@ -292,10 +314,11 @@ def main(argv: list[str] | None = None) -> int:
                 write_atomic(path, generated_policy)
                 ignore = safe_path(root, ".gitignore")
                 existing = ignore.read_text(encoding="utf-8") if ignore.is_file() else ""
-                additions = [item for item in ("/.exitzero/", "__pycache__/") if item not in existing.splitlines()]
+                ignored = ("/.exitzero/", "node_modules/" if args.profile == "node" else "__pycache__/")
+                additions = [item for item in ignored if item not in existing.splitlines()]
                 if additions:
                     write_atomic(ignore, existing.rstrip() + ("\n" if existing else "") + "\n".join(additions) + "\n")
-                if not select_files(root, ["**/*.py"]):
+                if args.profile != "node" and not select_files(root, ["**/*.py"]):
                     write_atomic(safe_path(root, "exitzero_sample.py"),
                                  '"""Replace this sample with your project checks."""\n\ndef add(left: int, right: int) -> int:\n    return left + right\n')
             policy = load_policy(path)

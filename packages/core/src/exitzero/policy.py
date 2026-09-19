@@ -102,6 +102,34 @@ def python_profile_policy(
     return "\n".join(lines)
 
 
+def node_profile_policy(source_roots: list[str], commands: list[tuple[str, list[str]]],
+                        input_paths: list[str]) -> str:
+    """Connect existing Node tools; never install packages or guess their flags."""
+    extensions = ("js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts")
+    roots = list(dict.fromkeys([*source_roots, "test", "tests"]))
+    paths = [f"{root.rstrip('/')}/**/*.{ext}" if root != "." else f"**/*.{ext}"
+             for root in roots for ext in extensions]
+    # Root tool configs are still inputs when source roots are narrowed.
+    paths.extend(f"*.{ext}" for ext in extensions)
+    paths.extend(f"**/{name}" for name in (
+        "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml",
+        "pnpm-workspace.yaml", "yarn.lock", "bun.lock", "bun.lockb", "tsconfig*.json",
+        "jsconfig*.json", ".eslintrc", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml"))
+    paths.extend(input_paths)
+    paths = list(dict.fromkeys(paths))
+    for pattern in paths:
+        validate_relative(pattern)
+    if not commands:
+        raise ValueError("Node profiles require a test command")
+    lines = ['version = 1', 'plugins = ["exitzero_verify", "exitzero_harness"]']
+    for check_id, argv in commands:
+        lines.extend(["", "[[checks]]", f"id = {json.dumps(check_id)}", 'kind = "command"',
+                      'reuse = false', f"paths = {json.dumps(paths, ensure_ascii=False)}", '[checks.options]',
+                      f"argv = {json.dumps(argv, ensure_ascii=False)}", 'timeout = 60'])
+    lines.extend(["", "[harness]", "config_files = []", "rules = []", ""])
+    return "\n".join(lines)
+
+
 def load_policy(path: Path) -> dict:
     # A FIFO or device file would block the read forever; every caller
     # (run, init --sync, report) shares this single regular-file guard.

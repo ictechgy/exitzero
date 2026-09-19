@@ -121,8 +121,8 @@ Quote literal arguments that contain punctuation; shell pipelines, redirects,
 and other control operators are rejected. `init` only records commands, so it
 does not execute them. Keep credentials out of command arguments because the
 policy stores the resulting argv. Existing policies are never overwritten,
-and generation options cannot be combined with `init --sync`. Without
-`--profile python`, `init` remains the syntax-only compatibility starter.
+and generation options cannot be combined with `init --sync`. The default
+profile remains the syntax-only compatibility starter.
 Generated command checks fingerprint Python files for the receipt. If a test
 or review command depends on JSON, YAML, Markdown, or another non-Python
 input, edit that check's `paths` in the policy to include those files.
@@ -133,6 +133,38 @@ From a checkout, the included example exercises all four check types:
 ./bin/exitzero --root examples/sample check
 ./bin/exitzero --root examples/sample lint-config
 ```
+
+## Generate checks for a Node repository
+
+From this source checkout, run inside an existing Node project with a local
+`package.json` and a test script:
+
+```sh
+exitzero init --profile node
+# Or, instead of the command above, explicitly connect your existing scripts:
+exitzero init --profile node --source-root src \
+  --test-command 'npm test' \
+  --lint-command 'npm run lint' \
+  --typecheck-command 'npm run typecheck' \
+  --input-path 'fixtures/**/*.json'
+```
+
+These are alternative initializations; an existing policy is never overwritten.
+The default test command is `npm test`; choose `pnpm test`, `yarn test`,
+`node --test`, or a non-watch runner command through `--test-command`.
+Lint/type-check scripts are added only when explicitly supplied. Generation
+does not run scripts, install packages, or create a Python sample. Missing tools
+and failing scripts fail the gate; no `--if-present` or error-swallowing flags
+are inserted. A custom test command can initialize a project without package.json.
+
+The checks fingerprint JS/JSX/TS/TSX and module variants, test directories, root
+tool configuration, package manifests, common lockfiles, TS/JS configs and ESLint
+configuration. Repeat `--source-root` for monorepo code; the default is the whole
+repository. Add other fixtures/configs with `--input-path`. Dependency/build
+directories already excluded by core are not inputs; external tools, installed
+dependencies and environment are not fingerprinted. Generated Node commands use
+`reuse = false` and run afresh. Existing project tools own JS/TS analysis; there
+is no bundled JavaScript parser or package manager.
 
 ## Put review requirements in the policy
 
