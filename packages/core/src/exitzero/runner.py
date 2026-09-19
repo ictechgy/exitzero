@@ -1,5 +1,5 @@
 """One runner for CLI, CI and local hook adapters."""
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 import glob
 from pathlib import Path
@@ -27,7 +27,9 @@ def _findings(values: list[Finding]) -> list[Finding]:
                 or not isinstance(finding.message, str)
                 or (finding.path is not None and not isinstance(finding.path, str))
                 or (finding.line is not None and (type(finding.line) is not int or finding.line < 1))
-                or finding.severity not in ("error", "warning")):
+                or finding.severity not in ("error", "warning")
+                or finding.category not in ("violation", "execution")
+                or (finding.category == "execution" and finding.severity != "error")):
             raise ValueError("Plugin returned invalid findings")
     return values
 
@@ -156,8 +158,11 @@ def _requirement_findings(receipt: dict, outcomes: dict[str, str], valid: bool) 
         if receipt["command"] not in {"lint-config", "doctor"}:
             if "failed" in statuses:
                 status = "failed"
+                blocking = any(check["id"] in requirement["checks"] and check.get("blocking")
+                               for check in receipt["checks"])
                 findings.append(Finding("core.requirement-failed",
-                                        f"Requirement {requirement['id']} has failed mapped checks; inspect their findings."))
+                                        f"Requirement {requirement['id']} has failed mapped checks; inspect their findings.",
+                                        severity="error" if blocking else "warning"))
             elif valid and statuses and all(value in ("passed", "reused") for value in statuses):
                 status = "checks_passed"
             if status == "unverified":
@@ -212,7 +217,7 @@ def _narrow_specs(checks: list[CheckSpec], changed: list[str]) -> list[CheckSpec
     return [CheckSpec(spec.id, spec.kind,
                       tuple(glob.escape(relative) for relative in changed
                             if match_path(relative, spec.paths)),
-                      spec.options, spec.reuse)
+                      spec.options, spec.reuse, spec.enforcement)
             for spec in checks]
 
 
@@ -279,6 +284,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
                     source_receipt, _source_entry = reusable[spec.id]
                     verification_outcomes[spec.id] = "reused"
                     receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": "reused",
+                                              "enforcement": spec.enforcement, "blocking": False,
                                               "finding_count": 0,
                                               "input_files": check_inputs.get(spec.id, []),
                                               "reused_from": source_receipt["run_id"]})
@@ -289,13 +295,19 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
                     # examined rather than implying a fresh full verification.
                     verification_outcomes[spec.id] = "passed"
                     receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": "passed",
+                                              "enforcement": spec.enforcement, "blocking": False,
                                               "finding_count": 0, "input_files": []})
                     continue
                 result = _findings(registry.checks[spec.kind](context, spec))
-                findings.extend(result)
                 errors = [finding for finding in result if finding.severity == "error"]
+                effective = [replace(finding, severity="warning")
+                             if spec.enforcement == "warn" and finding.category == "violation"
+                             and finding.severity == "error" else finding for finding in result]
+                findings.extend(effective)
                 verification_outcomes[spec.id] = "failed" if errors else "passed"
                 receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": verification_outcomes[spec.id],
+                                          "enforcement": spec.enforcement,
+                                          "blocking": any(finding.severity == "error" for finding in effective),
                                           "finding_count": len(result),
                                           "input_files": check_inputs.get(spec.id, [])})
             if slot is not None:

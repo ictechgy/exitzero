@@ -717,7 +717,7 @@ def check_command(context: Context, spec: CheckSpec) -> list[Finding]:
     try:
         process = subprocess.Popen(argv, **kwargs)
     except OSError:
-        return [Finding(spec.id, "Configured command could not be started")]
+        return [Finding(spec.id, "Configured command could not be started", category="execution")]
     try:
         process.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -729,7 +729,8 @@ def check_command(context: Context, spec: CheckSpec) -> list[Finding]:
         except OSError:
             process.kill()
         process.wait()
-        return [Finding(spec.id, "Configured command timed out")]
+        return [Finding(spec.id, "Configured command timed out", category="execution")]
     if process.returncode:
-        return [Finding(spec.id, f"Configured command failed with exit code {process.returncode}")]
+        return [Finding(spec.id, f"Configured command failed with exit code {process.returncode}",
+                        category="execution" if process.returncode < 0 else "violation")]
     return []

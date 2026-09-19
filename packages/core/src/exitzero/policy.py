@@ -127,7 +127,7 @@ def parse_policy(text: str) -> dict:
         raise ValueError("At least one verification check is required")
     ids: set[str] = set()
     for check in checks:
-        if not isinstance(check, dict) or set(check) - {"id", "kind", "paths", "options", "reuse"}:
+        if not isinstance(check, dict) or set(check) - {"id", "kind", "paths", "options", "reuse", "enforcement"}:
             raise ValueError("Invalid check fields")
         for key in ("id", "kind"):
             if not isinstance(check.get(key), str) or not NAME.fullmatch(check[key]):
@@ -144,6 +144,8 @@ def parse_policy(text: str) -> dict:
             raise ValueError("Check options must be a table")
         if not isinstance(check.get("reuse", True), bool):
             raise ValueError("Check reuse must be a boolean")
+        if check.get("enforcement", "block") not in ("block", "warn"):
+            raise ValueError("Check enforcement must be block or warn")
     if not isinstance(policy.get("harness", {}), dict):
         raise ValueError("harness must be a table")
     _validate_requirements(policy.get("requirements", []), ids)
@@ -173,7 +175,7 @@ def _validate_requirements(requirements: object, check_ids: set[str]) -> None:
 
 def specs(policy: dict) -> list[CheckSpec]:
     return [CheckSpec(c["id"], c["kind"], tuple(c.get("paths", [])), c.get("options", {}),
-                      c.get("reuse", True))
+                      c.get("reuse", True), c.get("enforcement", "block"))
             for c in policy["checks"]]
 
 
@@ -181,10 +183,12 @@ def render_agents(policy: dict) -> str:
     digest = hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     lines = [BEGIN, "## exitzero policy", "", "Generated from policy. Edit the TOML, then run `exitzero init --sync`.",
              "Run `exitzero check` before merge; keep the JSON receipt as evidence.",
-             "Run `exitzero lint-config` after changing agent configuration.", "", "Required checks:"]
+             "Run `exitzero lint-config` after changing agent configuration.", "",
+             "Configured checks:" if any(spec.enforcement == "warn" for spec in specs(policy)) else "Required checks:"]
     for spec in specs(policy):
         scope = ", ".join(spec.paths) or "configured command"
-        lines.append(f"- `{spec.id}`: `{spec.kind}` ({scope})")
+        note = " [warning only; violations remain recorded]" if spec.enforcement == "warn" else ""
+        lines.append(f"- `{spec.id}`: `{spec.kind}` ({scope}){note}")
     for rule in policy.get("harness", {}).get("rules", []):
         if isinstance(rule, dict) and isinstance(rule.get("id"), str) and isinstance(rule.get("value"), str):
             lines.append(f"- Rule `{rule['id']}`: {rule['value']}")

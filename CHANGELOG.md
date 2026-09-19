@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Per-check `enforcement = "warn" | "block"` separates observed failure from
+  gate disposition. Receipts retain failed checks/requirements while marking
+  advisory findings; execution, policy and receipt errors stay blocking.
+
 - `plugin incident-kit` scaffolds deliberately failing regression/neighboring
   tests and connects quality/command checks plus requirement mappings to the
   existing policy, preserving manual AGENTS guidance and existing files.

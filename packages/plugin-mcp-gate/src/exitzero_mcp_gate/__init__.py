@@ -38,8 +38,9 @@ _TOOL = {
         "Verify task completion against the project's exitzero gate. Call this "
         "before claiming work is done: it runs the project's configured checks "
         "and returns the verdict with a persisted receipt reference. A "
-        "'failed' verdict means checks found violations; inspect the receipt "
-        "and repair instead of declaring completion."
+        "'failed' verdict means blocking violations were found; inspect the receipt "
+        "and repair instead of declaring completion. A passed gate may still contain "
+        "advisory failures; it is not semantic proof that every requirement is met."
     ),
     "inputSchema": {
         "type": "object",
@@ -130,7 +131,7 @@ def _tool_result(receipt: dict[str, Any]) -> dict[str, Any]:
     location = f"Receipt: {receipt_ref}." if isinstance(receipt_ref, str) else \
         "Receipt unavailable: persistence failed."
     if exit_code == 0:
-        text = f"exitzero: completion verified — all checks passed. {location}"
+        text = f"exitzero: gate passed — no blocking violations. {location} Inspect advisory failures and requirement statuses before claiming completion."
     elif exit_code == 1:
         rules = sorted({f.get("rule", "?") for f in receipt.get("findings", [])
                         if isinstance(f, dict)})
@@ -148,9 +149,11 @@ def _tool_result(receipt: dict[str, Any]) -> dict[str, Any]:
             "exit_code": exit_code,
             "receipt": receipt_ref,
             "checks": [
-                {"id": check.get("id"), "status": check.get("status")}
+                {"id": check.get("id"), "status": check.get("status"),
+                 **{key: check[key] for key in ("enforcement", "blocking") if key in check}}
                 for check in receipt.get("checks", []) if isinstance(check, dict)
             ],
+            "requirements": receipt.get("requirements", []),
         },
     }
 

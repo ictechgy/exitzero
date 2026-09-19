@@ -223,6 +223,28 @@ a stale pass after the base ref moves.
 
 ## Commands and outcomes
 
+In the source checkout, each check can declare `enforcement = "warn"` for
+advisory rollout (`"block"` is the default):
+
+```toml
+[[checks]]
+id = "style"
+kind = "command"
+enforcement = "warn"
+paths = ["src/**/*.py"]
+[checks.options]
+argv = ["ruff", "check", "src"]
+```
+
+A reported violation stays `status: "failed"` in the check entry, with
+`enforcement: "warn"` and `blocking: false`; its findings become warnings.
+The gate can exit 0 while retaining those advisory failures. Mapped requirements
+remain `failed`, never `checks_passed`; they block only when a failing mapped
+check blocks. Unmapped/unverified requirements still block. Missing commands,
+timeouts and signal termination remain blocking execution findings, and invalid
+policy, plugin errors or missing receipts still exit 2. Config lint and hook
+handlers are not downgraded. `--reuse` never reuses an advisory failure.
+
 ```sh
 exitzero init
 exitzero init --sync
@@ -298,7 +320,7 @@ through exit codes:
 
 | Exit code | Meaning |
 | --- | --- |
-| 0 | All configured checks passed |
+| 0 | No blocking violations (advisory failures remain in the receipt) |
 | 1 | A check found a violation, including a command that fails, times out, or cannot start |
 | 2 | Invalid policy, missing plugin, internal execution error, or a receipt that could not be written |
 

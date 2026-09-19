@@ -146,6 +146,10 @@ def emit(receipt: dict, output: str) -> None:
             print(f"    {_scrub(item['detail'])}")
             print(f"    Next: {_scrub(item['next_step'])}")
     reused = [_scrub(check["id"]) for check in receipt.get("checks", []) if check.get("status") == "reused"]
+    advisory = [_scrub(check["id"]) for check in receipt.get("checks", [])
+                if check.get("status") == "failed" and check.get("blocking") is False]
+    if advisory:
+        print(f"  Advisory failures (not blocking): {', '.join(advisory)}")
     if reused:
         print(f"  Reused passing evidence (inputs unchanged): {', '.join(reused)}")
     for finding in receipt["findings"]:

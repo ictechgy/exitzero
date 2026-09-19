@@ -15,6 +15,8 @@ class Finding:
     path: str | None = None
     line: int | None = None
     severity: str = "error"
+    # Execution failures cannot be downgraded by an advisory check policy.
+    category: str = "violation"
 
 
 @dataclass(frozen=True)
@@ -27,6 +29,7 @@ class CheckSpec:
     # checks whose correctness depends on state outside hashed file inputs
     # (for example a moving git baseline).
     reuse: bool = True
+    enforcement: str = "block"
 
 
 @dataclass(frozen=True)

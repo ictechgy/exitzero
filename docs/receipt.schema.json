@@ -16,6 +16,7 @@
     "inputs": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},
     "checks": {"type": "array", "items": {"type": "object", "required": ["id", "kind", "status", "finding_count"], "properties": {
       "id": {"type": "string"}, "kind": {"type": "string"}, "status": {"enum": ["passed", "failed", "reused"]}, "finding_count": {"type": "integer", "minimum": 0},
+      "enforcement": {"enum": ["block", "warn"]}, "blocking": {"type": "boolean"},
       "input_files": {"type": "array", "items": {"type": "string"}}, "reused_from": {"type": "string", "pattern": "^[a-f0-9]{32}$"}
     }, "additionalProperties": false,
     "allOf": [
@@ -36,7 +37,8 @@
       }, "additionalProperties": false
     }},
     "findings": {"type": "array", "items": {"type": "object", "required": ["rule", "message", "path", "line", "severity"], "properties": {
-      "rule": {"type": "string"}, "message": {"type": "string"}, "path": {"type": ["string", "null"]}, "line": {"type": ["integer", "null"], "minimum": 1}, "severity": {"enum": ["error", "warning"]}
+      "rule": {"type": "string"}, "message": {"type": "string"}, "path": {"type": ["string", "null"]}, "line": {"type": ["integer", "null"], "minimum": 1}, "severity": {"enum": ["error", "warning"]},
+      "category": {"enum": ["violation", "execution"]}
     }, "additionalProperties": false}},
     "exit_code": {"enum": [0, 1, 2]},
     "status": {"enum": ["passed", "failed", "error"]},

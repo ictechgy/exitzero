@@ -22,11 +22,22 @@ def register(registry):
 `Context` contains `root`, parsed `policy`, `policy_path`, and `diff` (the
 `check --diff` ref or `None`; when set, a narrowed selection may legitimately
 select zero files). `CheckSpec` contains
-`id`, `kind`, `paths`, an `options` table and `reuse` (the policy's per-check
+`id`, `kind`, `paths`, an `options` table, `enforcement` (`"block"` by default,
+or `"warn"`), and `reuse` (the policy's per-check
 `reuse` boolean, default `true`; `false` excludes the check from `--reuse`
 result caching). Check and lint handlers return a list
 of `Finding`. Exceptions become operational errors (exit 2); they cannot pass a
 run. Findings must not include file contents, credentials or command output.
+
+`Finding.category` defaults to `"violation"`. Use `"execution"` with error
+severity for an execution failure that must never become advisory (the built-in
+command check uses it for spawn errors, timeouts and signal termination).
+Invalid categories or warning-severity execution findings are plugin errors.
+Core applies `enforcement = "warn"` only to verification violation findings,
+changing their effective severity to warning. Check entries retain their observed
+`passed`/`failed`/`reused` status and record `enforcement` plus `blocking` separately.
+Plugin warnings alone still mean a passed check. Failed advisory checks cannot
+be reused. Linter, hook-handler and core errors retain their normal gate behavior.
 
 Registration methods:
 
@@ -133,7 +144,10 @@ mapped check failed) or `unverified` (nothing proved this run). Requirement
 statuses reflect actual outcomes from that run, not the mapping itself. A
 requirement with no mapped checks, or whose checks did not run, produces a
 `core.requirement-unverified` finding (exit 1); a failed mapped check keeps
-`failed`; operational errors keep `unverified` entries and exit 2. `lint-config`
+`failed`. When all failing mapped checks are advisory, the requirement finding
+is a warning; any blocking mapped failure makes it an error. A gate exit 0 does
+not turn an advisory requirement failure into completion evidence. Operational
+errors keep unverified evidence and exit 2. `lint-config`
 reports all requirements as `unverified` without failing merely for lacking
 execution. `core.inputs-changed` invalidates `checks_passed` evidence for that
 run. Policies without `requirements` behave exactly as before.
