@@ -253,8 +253,11 @@ exitzero doctor --format json
 exitzero doctor --adapter cursor
 exitzero hooks install --adapter cursor
 exitzero hooks install --adapter pre-commit
+exitzero hooks install --adapter pre-push
+exitzero hooks install --adapter copilot
 exitzero hooks run --slot CI --format json
 exitzero report --format json
+exitzero report --run-id RUN_ID --format intoto
 exitzero plugin harness-eval --scenario examples/eval-repair   # 선택적 바운디드 eval
 exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP 프록시
 exitzero plugin ledger-publish                                 # 실행 기록 집계
@@ -303,6 +306,12 @@ exitzero plugin ledger-publish                                 # 실행 기록 �
 
 ## 로컬 훅과 CI
 
+소스 체크아웃에는 Copilot CLI `agentStop`과 Git `pre-push`도 있습니다.
+pre-push는 커밋된 깨끗한 작업 트리를 검사하며 현재 HEAD와 다른 커밋의 푸시는
+거절합니다. Copilot은 프로토콜 테스트만 수행했고 호스트 타임아웃은 통과 처리될
+수 있습니다. [훅 계약](docs/HOOKS.md)과 [CI 서명·검증 예제](docs/ATTESTATIONS.md)를
+참고하세요. MCP 인자 규칙은 [플러그인 계약](docs/PLUGIN_API.md)에 설명되어 있습니다.
+
 `doctor`는 현재 소스 체크아웃 기능이며 PyPI 0.3.0에는 포함되지 않았습니다.
 다음 릴리스 전에는 소스 런처로 실행하세요.
 `exitzero doctor`는 검증 명령을 실행하지 않고 AGENTS와 프로젝트 훅 설정을
@@ -347,8 +356,8 @@ python3 scripts/ci.py
 낯선 저장소에서는 실행 전에 검토하세요. 정적 검사와 설정 린트는 네트워크
 요청을 하지 않습니다. command 검사는 임의의 로컬 프로그램을 실행할 수
 있으므로, 게이트 전체를 오프라인으로 유지하려면 오프라인 명령을 고르세요.
-이것은 실행 샌드박스가 아닙니다. MCP 게이트웨이도 툴 이름만 인가할 뿐
-인자는 검사하지 않습니다.
+이것은 실행 샌드박스가 아닙니다. MCP 게이트웨이는 툴 이름을 인가하고,
+스키마를 아는 도구에 명시한 경로·HTTPS 출처·열거값 인자 규칙을 추가할 수 있습니다.
 `harness.config_files`에 나열된 설정 파일은 명시적으로 선택될 때만
 읽습니다. 설치된 Cursor 훅 파일은 드리프트 감지를 위해 자동으로
 핑거프린트됩니다. 자격증명 파일을 포함하지 마세요. 알려진 자격증명

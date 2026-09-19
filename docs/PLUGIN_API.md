@@ -44,7 +44,7 @@ Registration methods:
 - `add_check(kind, handler(context, spec), *, inputs=None)`
 - `add_linter(name, handler(context))`
 - `add_hook(slot, handler(context, slot))`, for `PreToolUse`, `PostToolUse`,
-  `pre-commit`, `CI`.
+  `pre-commit`, `pre-push`, `CI`.
 - `add_command(name, handler(context, argv))`, called with `exitzero plugin NAME`.
 
 The optional keyword-only `inputs(context, spec)` callable returns a `list` or
@@ -215,8 +215,45 @@ client; every other message is forwarded verbatim. Each decision is appended
 to `.exitzero/mcp-gateway/audit-<run_id>.jsonl` (`session_start`, `tool_call`,
 `tools_filtered`, `session_end` events). The session ends when the client
 closes stdin; a clean session exits 0 while configuration, spawn, audit or
-premature-upstream failures exit 2. The gateway never inspects tool
-arguments, never contacts the network, and is stdio-only.
+premature-upstream failures exit 2. The gateway is stdio-only and makes no network
+requests; it inspects arguments only where explicit rules are configured.
+
+Optional `[[argument_rules]]` tables constrain known tool schemas before
+forwarding. Tool names are exact (not globs); duplicates and unknown rule fields
+are errors. `keys` lists the only allowed top-level argument keys. Each key in
+`paths`, `origins` or `enums` is required and must be a string:
+
+```toml
+[[argument_rules]]
+tool = "read_file"
+keys = ["path", "mode"]
+[argument_rules.paths]
+path = ["src", "tests"]
+[argument_rules.enums]
+mode = ["text"]
+
+[[argument_rules]]
+tool = "fetch_document"
+keys = ["url"]
+[argument_rules.origins]
+url = ["https://docs.example.com"]
+```
+
+Path roots are relative to `upstream.cwd` (the invocation root by default).
+Absolute argument paths must be inside that directory and one allowed root.
+Traversal, symlinks, credential-like paths and shell/URL expansion syntax are
+rejected; inputs must be literal paths. HTTPS origins match scheme, normalized
+ASCII host and port exactly, without userinfo (use explicit punycode for IDNs).
+Invalid/missing/extra arguments are
+denied before the upstream sees the call; audit events record the decision and
+`argument-policy` reason, never the argument values.
+
+These constraints depend on the named tool honoring that literal argument
+schema. They are not a shell parser, DNS/redirect firewall, content DLP or sandbox;
+filesystem races remain possible. Keep arbitrary execution tools out of the
+allowlist. Unlisted tools are already denied and hidden from `tools/list`; use
+an explicit list of needed read tools rather than a broad `*` allow pattern.
+Tools without argument rules retain the original name-only authorization.
 
 `exitzero plugin ledger-publish` aggregates `.exitzero/runs/` receipts into
 one run record under `.exitzero/ledger/` — a versioned JSON record plus a

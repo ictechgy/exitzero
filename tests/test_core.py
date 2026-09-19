@@ -1388,9 +1388,18 @@ class DiffScopeTests(unittest.TestCase):
         predicate = statement["predicate"]
         self.assertEqual(predicate["run_id"], json.loads(check.stdout)["run_id"])
         subject = statement["subject"][0]
-        canonical = json.dumps(predicate, sort_keys=True, separators=(",", ":"),
-                               ensure_ascii=False).encode("utf-8")
-        self.assertEqual(subject["digest"]["sha256"], hashlib.sha256(canonical).hexdigest())
+        raw = (self.root / predicate["receipt"]).read_bytes()
+        self.assertEqual(subject["digest"]["sha256"], hashlib.sha256(raw).hexdigest())
+
+    def test_report_selects_exact_run_and_rejects_unsafe_ids(self):
+        self.init_and_commit()
+        first = json.loads(self.cli("check", "--format", "json").stdout)
+        self.cli("doctor", "--format", "json")
+        report = self.cli("report", "--run-id", first["run_id"], "--format", "json")
+        self.assertEqual(report.returncode, 0)
+        self.assertEqual(json.loads(report.stdout), first)
+        for value in ("../outside", "A" * 32, "0" * 32):
+            self.assertEqual(self.cli("report", "--run-id", value).returncode, 2)
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ ADAPTER_EVENTS = {
     "codex": STOP_ONLY_EVENTS,
     "gemini": STOP_ONLY_EVENTS,
     "agy": STOP_ONLY_EVENTS,
+    "copilot": {"stop": "PostToolUse", "agentStop": "PostToolUse", "preToolUse": "PreToolUse"},
 }
 # Hook runtimes read these entry fields; failClosed keeps hook failures from
 # proceeding silently, and timeout bounds a hung gate command.
@@ -40,6 +41,7 @@ HOOK_MANAGED_NOTE = {
     "gemini": "Gemini reads project hooks from .gemini/settings.json without a trust prompt; review the file before the next session.",
     "agy": "Antigravity reads project hooks from .agents/hooks.json; commands run synchronously and block the agent loop.",
     "cursor": "",
+    "copilot": "Copilot CLI only: trust the project hook. Host timeouts fail open; require CI for merge protection.",
 }
 # Nested-list adapters share one file layout but different settings keys:
 # (relative path, hook event key, shared-with-other-config).
@@ -69,10 +71,40 @@ def expected_adapter_command(root: Path, policy_path: Path, adapter: str, slot: 
                        "hooks", "run", "--adapter", adapter, "--event", event])
 
 
-def expected_git_hook(root: Path, policy_path: Path) -> str:
+def expected_git_hook(root: Path, policy_path: Path, slot: str = "pre-commit") -> str:
     command = shlex.join([*_launcher(), "--root", str(root), "--policy", policy_path.relative_to(root).as_posix(),
-                          "hooks", "run", "--slot", "pre-commit"])
+                          "hooks", "run", "--slot", slot])
     return "#!/bin/sh\n# exitzero managed hook\nexec " + command + "\n"
+
+
+def expected_copilot_entry(root: Path, policy_path: Path) -> dict:
+    argv = shlex.split(expected_adapter_command(root, policy_path, "copilot"))
+    return {"type": "command", "exec": argv[0], "args": argv[1:], "timeoutSec": HOOK_TIMEOUT_SECONDS}
+
+
+def valid_push_input(root: Path, payload: str) -> bool:
+    """Only attest pushes of the checked-out commit, including tags to it."""
+    try:
+        env = {**os.environ, "GIT_NO_LAZY_FETCH": "1"}
+        def commit(ref: str) -> str:
+            result = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", ref + "^{commit}"],
+                                    capture_output=True, text=True, timeout=15, env=env)
+            return result.stdout.strip() if result.returncode == 0 else ""
+        head = commit("HEAD")
+        if not head:
+            return False
+        for line in payload.splitlines():
+            fields = line.split()
+            if len(fields) != 4:
+                return False
+            local, remote = fields[1], fields[3]
+            if any(not re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", oid) for oid in (local, remote)):
+                return False
+            if set(local) != {"0"} and commit(local) != head:
+                return False
+        return True
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return False
 
 
 def _manifest(root: Path) -> dict:
@@ -193,6 +225,22 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
             owned.setdefault("failClosed", True)
             owned.setdefault("timeout", HOOK_TIMEOUT_SECONDS)
         content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    elif adapter == "copilot":
+        relative = ".github/hooks/exitzero.json"
+        path = safe_path(root, relative)
+        data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"version": 1, "hooks": {}}
+        if (not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1
+                or not isinstance(data.get("hooks"), dict)):
+            raise ValueError("Invalid Copilot hook configuration")
+        entries = data["hooks"].setdefault("agentStop", [])
+        if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+            raise ValueError("Invalid Copilot agentStop entries")
+        expected = expected_copilot_entry(root, policy_path)
+        entries[:] = [entry for entry in entries if not (
+            isinstance(entry.get("args"), list) and all(isinstance(arg, str) for arg in entry["args"])
+            and _exitzero_managed(adapter, shlex.join([str(entry.get("exec", "")), *entry["args"]])))]
+        entries.append(expected)
+        content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     elif adapter in SETTINGS_ADAPTERS:
         # All three read a nested hook list; the event key and file differ per
         # adapter. Shared settings files track drift per entry, not per file.
@@ -247,8 +295,10 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
         entry_digest = _entry_digest(owned)
     else:
+        if adapter not in {"pre-commit", "pre-push"}:
+            raise ValueError("Unsupported Git hook adapter")
         # Git executes hooks relative to the worktree root. Respect custom hook paths.
-        result = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks/pre-commit"],
+        result = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", f"hooks/{adapter}"],
                                 capture_output=True, text=True, check=False, timeout=15)
         if result.returncode != 0:
             raise ValueError("pre-commit adapter requires a Git repository")
@@ -259,11 +309,11 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         except ValueError:
             raise ValueError("External Git hook directories require manual CLI installation") from None
         path = safe_path(root, relative)
-        content = expected_git_hook(root, policy_path)
+        content = expected_git_hook(root, policy_path, adapter)
         if path.is_file() and path.read_text(encoding="utf-8") != content:
             raise ValueError("Existing pre-commit hook preserved; chain the CLI manually")
     write_atomic(path, content)
-    if adapter == "pre-commit":
+    if adapter in {"pre-commit", "pre-push"}:
         path.chmod(path.stat().st_mode | 0o111)
     if entry_digest is not None:
         manifest["entries"][relative] = entry_digest
@@ -427,3 +477,10 @@ def stop_block_response(receipt: dict, decision: str = "block") -> dict:
     if receipt["exit_code"] == 0:
         return {}
     return {"decision": decision, "reason": _cursor_failure_feedback(receipt)}
+
+
+def copilot_response(receipt: dict, event: str) -> dict:
+    if event == "preToolUse":
+        return {} if receipt["exit_code"] == 0 else {
+            "permissionDecision": "deny", "permissionDecisionReason": _cursor_failure_feedback(receipt)}
+    return stop_block_response(receipt)

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Review fixes: doctor rejects disabled project hooks; diff-scoped checks that
+  did not execute cannot satisfy mapped requirements.
+- Copilot CLI executable `agentStop`/manual `preToolUse` adapter and Git pre-push
+  installation with clean-HEAD/ref validation, shared gate receipts and doctor.
+- Opt-in MCP argument constraints for literal paths, exact HTTPS origins and
+  enumerations; invalid arguments are denied before forwarding without logging
+  values. Name-only behavior remains for tools without explicit rules.
+- `report --run-id` selects an exact receipt. in-toto subject digests now cover
+  the persisted file bytes (previously a canonical reserialization). Added an
+  optional trusted-CI GitHub attestation recipe; no signing occurs locally.
+
 - `init --profile node` connects existing test/lint/type-check commands with
   JS/TS, manifests, lockfiles and configuration inputs. Generation is offline,
   preserves existing policy, and never installs packages or runs commands.

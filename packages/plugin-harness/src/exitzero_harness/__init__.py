@@ -587,7 +587,14 @@ def _lint_hooks_document(context: Context, document: dict, relative: str) -> lis
             findings.append(Finding("harness.config", f"hook slot {slot!r} has no entries: {relative}", relative))
             continue
         for entry in entries:
-            if _is_claude_entry(entry):
+            if relative.startswith(".github/hooks/") and isinstance(entry, dict) and "exec" in entry:
+                if (entry.get("type", "command") != "command" or not isinstance(entry["exec"], str)
+                        or not entry["exec"].strip() or not isinstance(entry.get("args", []), list)
+                        or any(not isinstance(arg, str) for arg in entry.get("args", []))
+                        or any(key in entry for key in ("bash", "powershell", "command"))):
+                    findings.append(Finding("harness.config", "Invalid Copilot executable hook", relative))
+                cursor_entries = True
+            elif _is_claude_entry(entry):
                 findings.extend(_lint_claude_hook_entry(context, entry, relative))
             else:
                 cursor_entries = True

@@ -292,9 +292,12 @@ exitzero hooks install --adapter codex
 exitzero hooks install --adapter gemini
 exitzero hooks install --adapter agy
 exitzero hooks install --adapter pre-commit
+exitzero hooks install --adapter pre-push
+exitzero hooks install --adapter copilot
 exitzero hooks run --slot CI --format json
 exitzero report --format json
 exitzero report --format intoto   # unsigned in-toto Statement wrapping the latest receipt
+exitzero report --run-id RUN_ID --format intoto # select the gate run explicitly
 exitzero plugin harness-eval --scenario examples/eval-repair   # opt-in bounded eval
 exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP proxy
 exitzero plugin mcp-gate                                       # stdio completion-gate MCP server
@@ -378,6 +381,13 @@ attestations.
 
 ## Local hooks and CI
 
+The source checkout also supports Copilot CLI `agentStop` and Git `pre-push`.
+Pre-push checks a clean committed tree and rejects pushed commits different from
+the checked-out HEAD; Copilot integration is protocol-tested and host timeouts
+can fail open. See [hook setup](docs/HOOKS.md) for both contracts. The
+[optional attestation recipe](docs/ATTESTATIONS.md) signs a fresh trusted CI
+receipt artifact and explains how to verify its provenance and require the job.
+
 `doctor` is available in this source checkout and is not included in PyPI 0.3.0;
 use the source launcher until the next release.
 Run `exitzero doctor` to diagnose AGENTS drift and project hook setup without
@@ -425,8 +435,8 @@ Policies, selected plugins and command checks are trusted executable
 configuration. Review them before running an unfamiliar repository. Static
 checks and config lint make no network requests. Command checks can run
 arbitrary local programs; choose offline commands to keep the whole gate
-offline. This is not an execution sandbox; the MCP gateway only authorizes
-tool names, never arguments. Config files listed under `harness.config_files` are read only when
+offline. This is not an execution sandbox; the MCP gateway authorizes tool names
+and optional explicit argument rules for known tool schemas. Config files listed under `harness.config_files` are read only when
 explicitly selected; an installed Cursor hooks file is fingerprinted
 automatically so drift is detectable. Do not include credential files.
 Known credential-like paths and symlink targets are rejected. Path filtering

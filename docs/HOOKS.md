@@ -13,8 +13,8 @@ exitzero doctor --adapter cursor --format json
 ```
 
 Doctor reuses the configured linters (including AGENTS and installed-hook drift)
-and inspects the five supported project hook documents plus the active
-repository-local Git pre-commit path. It does not execute test commands or hooks,
+and inspects the supported project hook documents plus the active
+repository-local Git pre-commit/pre-push paths. It does not execute test commands or hooks,
 read home-directory/managed settings, call a model, or contact the hosting service.
 Selected plugins and their linters remain trusted Python code.
 
@@ -214,6 +214,29 @@ the drifted hook entry and stopped again into a passing gate. Headless
 `agy -p` loads `hooks.json` but does not execute hooks — the same gap as
 Cursor's `-p`; use tool-event hooks or the CI slot in pipelines.
 
+## GitHub Copilot CLI
+
+```sh
+exitzero hooks install --adapter copilot
+exitzero doctor --adapter copilot
+```
+
+The source adapter writes `.github/hooks/exitzero.json`, preserving foreign
+entries, with a version-1 `hooks.agentStop` executable entry (`exec`, `args`,
+`timeoutSec: 120`). This is the CLI executable contract, not a portable cloud
+agent deployment; reinstall after moving Python or the checkout.
+It emits `decision: block` and bounded receipt feedback for every nonzero gate,
+including operational errors. Adapter exit 0 makes the host process the JSON;
+the receipt retains the real 0/1/2 gate code. Passing stops emit `{}`.
+Manual `hooks run --adapter copilot --event preToolUse` integration emits a deny
+on failure and `{}` on pass to retain normal host permission decisions.
+
+Copilot host timeouts fail open and its stop loop has a continuation limit.
+Project trust and effective user/managed settings also matter. Require CI for
+merge protection; doctor does not establish runtime invocation. Tested against
+local protocol fixtures, not a live Copilot session. Contract source:
+[official hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference).
+
 ## Git pre-commit
 
 ```sh
@@ -233,6 +256,23 @@ Git index, pre-commit fails if tracked files have unstaged edits or nonignored
 untracked files exist. Stage or stash them first. CI checks the actual checkout
 that is proposed for merge. Local hooks can be bypassed, so require CI as well.
 
+## Git pre-push
+
+```sh
+exitzero hooks install --adapter pre-push
+exitzero doctor --adapter pre-push
+git push
+```
+
+The adapter consumes Git ref updates on stdin and runs the same gate. It requires
+committed, clean tracked/staged files and no nonignored untracked files. Every
+non-deletion update must resolve to the checked-out HEAD commit; tags pointing
+to it work. Check out other branches before pushing them. Mismatched/malformed
+ref input is exit 2; violations are exit 1. Foreign hooks are preserved, custom
+repository-local hooksPath is respected, and external hook directories need
+manual setup. A manual chain calls `exitzero hooks run --slot pre-push`, forwarding
+Git stdin and the exit code. Local hooks can be bypassed; require CI as well.
+
 ## Generic CI or another editor
 
 ```sh
@@ -244,7 +284,7 @@ exitzero lint-config --format json
 
 Codes are 0 (pass), 1 (violation), 2 (configuration/execution/receipt error).
 Save `.exitzero/runs/*.json` as artifacts even when a command fails. Core slots
-are `PreToolUse`, `PostToolUse`, `pre-commit`, and `CI`; these names are an internal
+are `PreToolUse`, `PostToolUse`, `pre-commit`, `pre-push`, and `CI`; these names are an internal
 API, and adapters translate editor-specific event names.
 
 ### CI verification pattern
@@ -349,6 +389,9 @@ in-toto Statement v1 (`predicateType: https://exitzero.dev/attestations/gate/v1`
 for archival or downstream attestation pipelines. The statement is unsigned;
 signing with an external key (sigstore, DSSE) is a deployment decision, not
 something the tool fabricates locally.
+Use `report --run-id ID --format intoto` to select the exact run; its digest
+covers the saved receipt's file bytes. See the [CI attestation recipe](ATTESTATIONS.md)
+for signing and validating a trusted CI artifact.
 
 ## Hosts without stop hooks
 
