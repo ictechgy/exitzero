@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable, Any
 
 API_VERSION = 1
-HOOK_SLOTS = frozenset({"PreToolUse", "PostToolUse", "pre-commit", "CI"})
+HOOK_SLOTS = frozenset({"PreToolUse", "PostToolUse", "pre-commit", "pre-push", "CI"})
 
 
 @dataclass(frozen=True)

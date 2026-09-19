@@ -9,7 +9,7 @@
     "run_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
     "started_at": {"type": "string", "format": "date-time"},
     "command": {"enum": ["check", "lint-config", "doctor"]},
-    "hook_slot": {"enum": [null, "PreToolUse", "PostToolUse", "pre-commit", "CI"]},
+    "hook_slot": {"enum": [null, "PreToolUse", "PostToolUse", "pre-commit", "pre-push", "CI"]},
     "diff": {"type": "string", "description": "Git ref or range the check selection was narrowed against (--diff). Absent on unscoped runs."},
     "policy_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
     "plugins": {"type": "array", "items": {"type": "string"}},
@@ -30,7 +30,7 @@
     }, "additionalProperties": false}},
     "diagnostics": {"type": "array", "description": "Project setup observations from doctor, not evidence of runtime enforcement.", "items": {
       "type": "object", "required": ["target", "state", "runtime", "path", "detail", "next_step"], "properties": {
-        "target": {"enum": ["cursor", "claude", "codex", "gemini", "agy", "pre-commit", "CI"]},
+        "target": {"enum": ["cursor", "claude", "codex", "gemini", "agy", "copilot", "pre-commit", "pre-push", "CI"]},
         "state": {"enum": ["configured", "missing", "unmanaged", "misconfigured", "unknown"]},
         "runtime": {"const": "unverified"},
         "path": {"type": ["string", "null"]}, "detail": {"type": "string"}, "next_step": {"type": "string"}

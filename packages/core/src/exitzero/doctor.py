@@ -8,21 +8,23 @@ import subprocess
 from .api import Context, Finding
 from .files import safe_path
 from .hooks import (AGY_HOOK_NAME, SETTINGS_ADAPTERS, _manifest,
-                    expected_adapter_command, expected_git_hook, lint_installed)
+                    expected_adapter_command, expected_copilot_entry, expected_git_hook, lint_installed)
 
 ADAPTER_PATHS = {
     "cursor": ".cursor/hooks.json",
     **{name: values[0] for name, values in SETTINGS_ADAPTERS.items()},
     "agy": ".agents/hooks.json",
+    "copilot": ".github/hooks/exitzero.json",
 }
-ADAPTERS = (*ADAPTER_PATHS, "pre-commit")
+_GIT_ADAPTERS = {"pre-commit", "pre-push"}
+ADAPTERS = (*ADAPTER_PATHS, "pre-commit", "pre-push")
 
 
-def _git_hook(root: Path) -> str | None:
+def _git_hook(root: Path, slot: str = "pre-commit") -> str | None:
     """Resolve the active local hook; never read external hook directories."""
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "rev-parse", "--git-path", "hooks/pre-commit"],
+            ["git", "-C", str(root), "rev-parse", "--git-path", f"hooks/{slot}"],
             capture_output=True, text=True, timeout=15, check=False)
     except FileNotFoundError:
         return None
@@ -38,9 +40,10 @@ def _git_hook(root: Path) -> str | None:
 
 def input_paths(root: Path) -> list[str]:
     paths = list(ADAPTER_PATHS.values())
-    git_hook = _git_hook(root)
-    if git_hook is not None:
-        paths.append(git_hook)
+    for slot in sorted(_GIT_ADAPTERS):
+        git_hook = _git_hook(root, slot)
+        if git_hook is not None:
+            paths.append(git_hook)
     return paths
 
 
@@ -57,9 +60,9 @@ def _entries(data: dict, adapter: str) -> list[dict]:
         entries = owner.get("Stop", []) if isinstance(owner, dict) else []
     else:
         hooks = data.get("hooks", {})
-        event = "stop" if adapter == "cursor" else SETTINGS_ADAPTERS[adapter][1]
+        event = "stop" if adapter == "cursor" else "agentStop" if adapter == "copilot" else SETTINGS_ADAPTERS[adapter][1]
         entries = hooks.get(event, []) if isinstance(hooks, dict) else []
-        if adapter != "cursor" and isinstance(entries, list):
+        if adapter not in {"cursor", "copilot"} and isinstance(entries, list):
             entries = [entry for group in entries if isinstance(group, dict) and group.get("disabled") is not True
                        for entry in (group.get("hooks") if isinstance(group.get("hooks"), list) else [])]
     return [entry for entry in entries if isinstance(entry, dict)] if isinstance(entries, list) else []
@@ -75,7 +78,7 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
     diagnostics: list[dict] = []
     findings: list[Finding] = []
     for adapter in ADAPTERS:
-        relative = _git_hook(context.root) if adapter == "pre-commit" else ADAPTER_PATHS[adapter]
+        relative = _git_hook(context.root, adapter) if adapter in _GIT_ADAPTERS else ADAPTER_PATHS[adapter]
         item = {
             "target": adapter, "state": "missing", "runtime": "unverified",
             "path": relative,
@@ -83,8 +86,8 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
             "next_step": f"If needed, run exitzero hooks install --adapter {adapter}.",
         }
         diagnostics.append(item)
-        inactive_git_hook = adapter == "pre-commit" and relative not in recorded and any(
-            Path(name).name == "pre-commit" for name in manifest["files"])
+        inactive_git_hook = adapter in _GIT_ADAPTERS and relative not in recorded and any(
+            Path(name).name == adapter for name in manifest["files"])
         if relative is None:
             item.update(state="unknown", detail="No repository-local Git hook path could be resolved.",
                         next_step="Check Git availability, the repository and core.hooksPath; external hooks need manual setup.")
@@ -103,7 +106,7 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
                 item.update(state="unmanaged", detail="A hook configuration exists without an exitzero installation record.",
                             next_step="Review manual integrations; install exitzero if this client should use the gate.")
 
-            if path.is_file() and adapter != "pre-commit":
+            if path.is_file() and adapter not in _GIT_ADAPTERS:
                 try:
                     data = _document(path)
                 except (ValueError, UnicodeError):
@@ -117,12 +120,17 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
                     findings.append(Finding("doctor.hooks-disabled", item["detail"], relative))
                 owned = [entry for entry in _entries(data, adapter)
                          if entry.get("command") == expected and entry.get("type", "command") == "command"]
+                if adapter == "copilot":
+                    desired = expected_copilot_entry(context.root, context.policy_path)
+                    owned = [entry for entry in _entries(data, adapter)
+                             if entry.get("exec") == desired["exec"] and entry.get("args") == desired["args"]
+                             and entry.get("type", "command") == "command"]
                 if relative in recorded and not owned:
                     item.update(state="misconfigured", detail="No installed stop command matches the current checkout, interpreter and policy.",
                                 next_step=f"Run exitzero hooks install --adapter {adapter} after reviewing stale hook entries.")
                     findings.append(Finding("doctor.hook-command", item["detail"], relative))
                 for entry in owned:
-                    timeout = entry.get("timeout")
+                    timeout = entry.get("timeoutSec") if adapter == "copilot" else entry.get("timeout")
                     if (type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0):
                         item.update(state="misconfigured", detail="The gate hook needs a positive finite timeout.")
                         findings.append(Finding("doctor.hook-timeout", item["detail"], relative))
@@ -140,8 +148,8 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
                     item.update(state="misconfigured", detail="Project settings declare allowManagedHooksOnly; this project hook cannot enforce the gate.",
                                 next_step="Use your managed hook deployment or required CI; confirm effective client settings.")
                     findings.append(Finding("doctor.managed-only", item["detail"], relative))
-            elif path.is_file() and adapter == "pre-commit" and relative in recorded:
-                if path.read_text(encoding="utf-8") != expected_git_hook(context.root, context.policy_path):
+            elif path.is_file() and adapter in _GIT_ADAPTERS and relative in recorded:
+                if path.read_text(encoding="utf-8") != expected_git_hook(context.root, context.policy_path, adapter):
                     item.update(state="misconfigured", detail="The Git hook does not match the current checkout, interpreter and policy.",
                                 next_step="Review the existing Git hook and reinstall or update its command manually.")
                     findings.append(Finding("doctor.hook-command", item["detail"], relative))
@@ -151,7 +159,7 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
                     findings.append(Finding("doctor.hook-executable", item["detail"], relative))
 
         if inactive_git_hook:
-            item.update(state="misconfigured", detail="A pre-commit installation is recorded at a different or unresolved Git hook path.",
+            item.update(state="misconfigured", detail="A Git hook installation is recorded at a different or unresolved hook path.",
                         next_step="Review core.hooksPath and reinstall at the active path; external directories require manual setup.")
             findings.append(Finding("doctor.hook-inactive", item["detail"], relative))
         if required_adapter == adapter and item["state"] != "configured":
@@ -160,8 +168,10 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
             item["detail"] += " Stop provides repair feedback, not merge protection; headless stop behavior is client-version dependent."
         elif adapter == "agy":
             item["detail"] += " Stop execution in headless mode is not established by this configuration."
-        elif adapter == "pre-commit":
+        elif adapter in _GIT_ADAPTERS:
             item["detail"] += " Local Git hooks can be bypassed."
+        elif adapter == "copilot":
+            item["detail"] += " CLI hook timeouts fail open; installation does not establish live compatibility."
 
     diagnostics.append({
         "target": "CI", "state": "unknown", "runtime": "unverified", "path": None,

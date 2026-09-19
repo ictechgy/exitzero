@@ -250,7 +250,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
             raise ValueError("No config linter is registered")
         receipt["plugins"] = policy["plugins"]
         context = Context(root, policy, path, diff)
-        if slot == "pre-commit":
+        if slot in {"pre-commit", "pre-push"}:
             dirty = subprocess.run(["git", "-C", str(root), "diff", "--quiet", "--"],
                                    capture_output=True, timeout=15)
             untracked = subprocess.run(["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
@@ -259,6 +259,13 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
                 raise ValueError("Cannot inspect Git index")
             if dirty.returncode == 1 or untracked.stdout.strip():
                 findings.append(Finding("core.index-mismatch", "Stage or stash all working-tree changes before using the pre-commit gate."))
+            if slot == "pre-push":
+                staged = subprocess.run(["git", "-C", str(root), "diff", "--cached", "--quiet", "--"],
+                                        capture_output=True, timeout=15)
+                if staged.returncode not in (0, 1):
+                    raise ValueError("Cannot inspect staged changes")
+                if staged.returncode == 1:
+                    findings.append(Finding("core.index-mismatch", "Commit or stash staged changes before using the pre-push gate."))
         checks = specs(policy)
         if any(spec.kind not in registry.checks for spec in checks):
             raise ValueError("Policy references an unregistered check kind")
@@ -323,7 +330,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         findings.append(Finding("core.error", f"Unable to complete run ({type(error).__name__}); inspect policy, paths and plugin settings."))
     if input_error:
         operational_error = True
-        findings.append(Finding("core.hook-input", "Invalid hook input; expected a JSON object and a nonnegative integer loop_count."))
+        findings.append(Finding("core.hook-input", "Invalid hook input or push references; push only the checked-out commit from a clean tree."))
     findings.extend(_requirement_findings(receipt, verification_outcomes, not operational_error and not inputs_changed))
     if command == "doctor" and (operational_error or inputs_changed):
         for diagnostic in receipt["diagnostics"]:

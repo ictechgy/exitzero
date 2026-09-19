@@ -12,7 +12,8 @@ from . import __version__
 from .api import Context, HOOK_SLOTS
 from .doctor import ADAPTERS
 from .files import safe_path, select_files, validate_relative, write_atomic
-from .hooks import ADAPTER_EVENTS, HOOK_MANAGED_NOTE, cursor_response, install, stop_block_response
+from .hooks import (ADAPTER_EVENTS, HOOK_MANAGED_NOTE, copilot_response, cursor_response,
+                    install, stop_block_response, valid_push_input)
 from .loader import discover
 from .policy import DEFAULT_POLICY, load_policy, node_profile_policy, python_profile_policy, sync_agents
 from .runner import run
@@ -54,14 +55,15 @@ def parser() -> argparse.ArgumentParser:
                         help="Require this adapter to be configured; other adapters remain optional")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
     installer = hooks.add_parser("install")
-    installer.add_argument("--adapter", choices=("cursor", "claude", "codex", "gemini", "agy", "pre-commit"), default="cursor")
+    installer.add_argument("--adapter", choices=ADAPTERS, default="cursor")
     hook_run = hooks.add_parser("run")
-    hook_run.add_argument("--adapter", choices=("generic", "cursor", "claude", "codex", "gemini", "agy"), default="generic")
+    hook_run.add_argument("--adapter", choices=("generic", *ADAPTER_EVENTS), default="generic")
     hook_run.add_argument("--slot", choices=sorted(HOOK_SLOTS), default="CI")
     hook_run.add_argument("--event", choices=sorted({event for events in ADAPTER_EVENTS.values() for event in events}),
                         default="stop")
     hook_run.add_argument("--format", choices=("human", "json"), default="human")
     report = commands.add_parser("report")
+    report.add_argument("--run-id", help="Select one persisted receipt instead of the latest run")
     report.add_argument("--format", choices=("human", "json", "sarif", "intoto"), default="human")
     plugin = commands.add_parser("plugin")
     plugin.add_argument("name")
@@ -115,14 +117,12 @@ def _scrub(value: object) -> str:
     return _CONTROL.sub(lambda match: f"\\x{ord(match.group(0)):02x}", str(value))
 
 
-def _intoto(receipt: dict) -> dict:
+def _intoto(receipt: dict, payload: bytes) -> dict:
     """Wrap a receipt in an unsigned in-toto Statement v1 for CI archival.
 
     The statement attests that this receipt exists as produced by the gate;
     signatures stay out of scope — local receipts are unsigned evidence.
     """
-    payload = json.dumps(receipt, sort_keys=True, separators=(",", ":"),
-                         ensure_ascii=False).encode("utf-8")
     return {
         "_type": "https://in-toto.io/Statement/v1",
         "subject": [{"name": receipt.get("receipt") or f"run-{receipt.get('run_id', 'unknown')}",
@@ -132,12 +132,14 @@ def _intoto(receipt: dict) -> dict:
     }
 
 
-def emit(receipt: dict, output: str) -> None:
+def emit(receipt: dict, output: str, *, receipt_bytes: bytes | None = None) -> None:
     if output == "sarif":
         print(json.dumps(_sarif(receipt), ensure_ascii=False, sort_keys=True))
         return
     if output == "intoto":
-        print(json.dumps(_intoto(receipt), ensure_ascii=False, sort_keys=True))
+        if receipt_bytes is None:
+            raise ValueError("in-toto export requires persisted receipt bytes")
+        print(json.dumps(_intoto(receipt, receipt_bytes), ensure_ascii=False, sort_keys=True))
         return
     if output == "json":
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
@@ -293,13 +295,26 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("Invalid hook payload")
             except (ValueError, OSError, RecursionError):
                 receipt = run(root, args.policy, "check", events[args.event], input_error=True)
+                if args.adapter == "copilot":
+                    print(json.dumps(copilot_response(receipt, args.event)))
+                    return 0
                 print(json.dumps({"error": f"Invalid {args.adapter} JSON input", "receipt": receipt["receipt"]}))
                 return 2
             receipt = run(root, args.policy, "check", events[args.event])
+            if args.adapter == "copilot":
+                print(json.dumps(copilot_response(receipt, args.event)))
+                return 0
             print(json.dumps(stop_block_response(receipt,
                                                  "continue" if args.adapter == "agy" else "block")))
             return 0 if receipt["exit_code"] != 2 else 2
-        receipt = run(root, args.policy, "check", args.slot)
+        push_error = False
+        if args.slot == "pre-push":
+            try:
+                payload = sys.stdin.read(1024 * 1024 + 1)
+                push_error = len(payload) > 1024 * 1024 or not valid_push_input(root, payload)
+            except (OSError, UnicodeError):
+                push_error = True
+        receipt = run(root, args.policy, "check", args.slot, input_error=push_error)
         emit(receipt, args.format)
         return receipt["exit_code"]
     try:
@@ -327,12 +342,24 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "report":
             directory = safe_path(root, ".exitzero/runs")
-            files = sorted((p for p in directory.glob("*.json") if p.is_file()),
-                           key=lambda p: p.stat().st_mtime_ns)
-            if not files:
-                raise ValueError("No receipt exists; run check first")
-            latest = safe_path(root, files[-1].relative_to(root).as_posix())
-            emit(json.loads(latest.read_text(encoding="utf-8")), args.format)
+            if args.run_id is not None:
+                if not re.fullmatch(r"[0-9a-f]{32}", args.run_id):
+                    raise ValueError("Invalid receipt run id")
+                latest = safe_path(root, f".exitzero/runs/{args.run_id}.json")
+            else:
+                files = sorted((p for p in directory.glob("*.json") if p.is_file()),
+                               key=lambda p: p.stat().st_mtime_ns)
+                if not files:
+                    raise ValueError("No receipt exists; run check first")
+                latest = safe_path(root, files[-1].relative_to(root).as_posix())
+            if not latest.is_file():
+                raise ValueError("Receipt must be a regular file")
+            raw = latest.read_bytes()
+            receipt = json.loads(raw)
+            if (not isinstance(receipt, dict) or receipt.get("run_id") != latest.stem
+                    or receipt.get("receipt") != latest.relative_to(root).as_posix()):
+                raise ValueError("Receipt identity does not match its file")
+            emit(receipt, args.format, receipt_bytes=raw)
             return 0
         policy = load_policy(path)
         if args.command == "hooks":
