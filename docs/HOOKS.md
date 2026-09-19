@@ -130,6 +130,22 @@ but trust review applies: persist trust in an interactive session first, or
 pass `--dangerously-bypass-hook-trust` for automation that vets its hook
 sources. Live Claude Code verification has not been performed.
 
+## Gemini CLI
+
+```sh
+exitzero hooks install --adapter gemini
+exitzero lint-config
+```
+
+Gemini CLI uses the same nested hook list shape, stored in shared
+`.gemini/settings.json` under the `AfterAgent` event (its Stop equivalent),
+so drift is tracked per managed entry like Claude's file. The stdin/stdout
+contract is also identical: `{"decision": "block", "reason": ...}` on
+failure, `{}` on pass, exit 2 for operational errors. Gemini reads project
+hooks without a trust prompt — review `.gemini/settings.json` before the
+next session. `gemini hooks migrate --from-claude` maps `Stop` to
+`AfterAgent`, matching this adapter's layout.
+
 ## Git pre-commit
 
 ```sh

@@ -45,9 +45,9 @@ def parser() -> argparse.ArgumentParser:
                                help="Limit checks to files changed relative to a git ref or range such as origin/main...HEAD")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
     installer = hooks.add_parser("install")
-    installer.add_argument("--adapter", choices=("cursor", "claude", "codex", "pre-commit"), default="cursor")
+    installer.add_argument("--adapter", choices=("cursor", "claude", "codex", "gemini", "pre-commit"), default="cursor")
     hook_run = hooks.add_parser("run")
-    hook_run.add_argument("--adapter", choices=("generic", "cursor", "claude", "codex"), default="generic")
+    hook_run.add_argument("--adapter", choices=("generic", "cursor", "claude", "codex", "gemini"), default="generic")
     hook_run.add_argument("--slot", choices=sorted(HOOK_SLOTS), default="CI")
     hook_run.add_argument("--event", choices=sorted({event for events in ADAPTER_EVENTS.values() for event in events}),
                         default="stop")
@@ -247,8 +247,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(cursor_response(receipt, args.event, payload)))
                 # Cursor reads the JSON protocol; generic adapters expose unchanged gate codes.
                 return 0 if receipt["exit_code"] != 2 else 2
-            # Claude Code and Codex share the nested Stop contract: a JSON object
-            # on stdin, {"decision": "block", "reason": ...} to continue the turn.
+            # Claude Code, Codex and Gemini share the nested stop contract: a
+            # JSON object on stdin, {"decision": "block", "reason": ...} to continue the turn.
             try:
                 payload = json.loads(sys.stdin.read(1024 * 1024))
                 if not isinstance(payload, dict):

@@ -20,13 +20,15 @@ CURSOR_EVENTS = {
     "stop": "PostToolUse",
 }
 
-# Claude Code and Codex expose a blocking Stop hook; completion gating maps to
-# the same PostToolUse slot. Other events are reachable through generic slots.
+# Claude Code, Codex and Gemini CLI expose a blocking Stop-equivalent hook;
+# completion gating maps to the same PostToolUse slot. Other events are
+# reachable through generic slots.
 STOP_ONLY_EVENTS = {"stop": "PostToolUse"}
 ADAPTER_EVENTS = {
     "cursor": CURSOR_EVENTS,
     "claude": STOP_ONLY_EVENTS,
     "codex": STOP_ONLY_EVENTS,
+    "gemini": STOP_ONLY_EVENTS,
 }
 # Hook runtimes read these entry fields; failClosed keeps hook failures from
 # proceeding silently, and timeout bounds a hung gate command.
@@ -34,7 +36,15 @@ HOOK_TIMEOUT_SECONDS = 120
 HOOK_MANAGED_NOTE = {
     "claude": "Approve or trust the project hook on the next Claude Code session; managed allowManagedHooksOnly policies can disable project hooks entirely.",
     "codex": "Codex gates hooks behind trust review; run /hooks or approve the hook prompt before the stop gate can fire.",
+    "gemini": "Gemini reads project hooks from .gemini/settings.json without a trust prompt; review the file before the next session.",
     "cursor": "",
+}
+# Nested-list adapters share one file layout but different settings keys:
+# (relative path, hook event key, shared-with-other-config).
+SETTINGS_ADAPTERS = {
+    "claude": (".claude/settings.json", "Stop", True),
+    "codex": (".codex/hooks.json", "Stop", False),
+    "gemini": (".gemini/settings.json", "AfterAgent", True),
 }
 
 
@@ -102,21 +112,21 @@ def _exitzero_managed(adapter: str, command: object) -> bool:
             and "hooks run" in command and f"--adapter {adapter}" in command)
 
 
-def _merge_settings_hooks(data: dict, command: str, adapter: str) -> dict:
+def _merge_settings_hooks(data: dict, command: str, adapter: str, event: str = "Stop") -> dict:
     hooks = data.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         raise ValueError("Existing hook configuration has a non-object 'hooks'")
-    groups = hooks.setdefault("Stop", [])
+    groups = hooks.setdefault(event, [])
     if not isinstance(groups, list):
-        raise ValueError("Existing 'Stop' hooks must be a list")
+        raise ValueError(f"Existing '{event}' hooks must be a list")
     owned = None
     emptied_by_pruning: set[int] = set()
     for index, group in enumerate(groups):
         if not isinstance(group, dict):
-            raise ValueError("Existing 'Stop' hook groups must be objects")
+            raise ValueError(f"Existing '{event}' hook groups must be objects")
         entries = group.get("hooks")
         if not isinstance(entries, list):
-            raise ValueError("Existing 'Stop' hook groups require a 'hooks' list")
+            raise ValueError(f"Existing '{event}' hook groups require a 'hooks' list")
         # Drop stale exitzero entries (older root/policy paths) while keeping
         # foreign hooks untouched; only the current command may stay.
         before = len(entries)
@@ -173,10 +183,10 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
             owned.setdefault("failClosed", True)
             owned.setdefault("timeout", HOOK_TIMEOUT_SECONDS)
         content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
-    elif adapter in ("claude", "codex"):
-        # Both read a Claude Code-style nested Stop list. Claude stores it in a
-        # shared settings.json so drift is tracked per entry, not per file.
-        relative = ".claude/settings.json" if adapter == "claude" else ".codex/hooks.json"
+    elif adapter in SETTINGS_ADAPTERS:
+        # All three read a nested hook list; the event key and file differ per
+        # adapter. Shared settings files track drift per entry, not per file.
+        relative, event, shared = SETTINGS_ADAPTERS[adapter]
         path = safe_path(root, relative)
         if path.is_file():
             try:
@@ -188,10 +198,10 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         else:
             data = {}
         command = expected_adapter_command(root, policy_path, adapter)
-        data = _merge_settings_hooks(data, command, adapter)
+        data = _merge_settings_hooks(data, command, adapter, event)
         content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
-        if adapter == "claude":
-            entry = next(entry for group in data["hooks"]["Stop"]
+        if shared:
+            entry = next(entry for group in data["hooks"][event]
                          for entry in group["hooks"] if entry.get("command") == command)
             entry_digest = _entry_digest(entry)
     else:
@@ -226,13 +236,13 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
     return relative
 
 
-def _claude_stop_entries(path: Path) -> list[dict]:
+def _settings_stop_entries(path: Path, event: str) -> list[dict]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, UnicodeDecodeError):
         return []
     hooks = data.get("hooks") if isinstance(data, dict) else None
-    groups = hooks.get("Stop") if isinstance(hooks, dict) else None
+    groups = hooks.get(event) if isinstance(hooks, dict) else None
     entries: list[dict] = []
     for group in groups if isinstance(groups, list) else []:
         for entry in group.get("hooks", []) if isinstance(group, dict) else []:
@@ -248,9 +258,12 @@ def lint_installed(context: Context) -> list[Finding]:
         path = safe_path(context.root, relative)
         if not path.is_file() or sha256_file(path) != digest:
             findings.append(Finding("harness.hooks-drift", "Installed hook changed or disappeared; review and reinstall it.", relative))
+    entry_events = {relative: event for relative, event, shared
+                    in SETTINGS_ADAPTERS.values() if shared}
     for relative, digest in manifest["entries"].items():
         path = safe_path(context.root, relative)
-        entries = _claude_stop_entries(path) if path.is_file() else []
+        entries = (_settings_stop_entries(path, entry_events[relative])
+                   if path.is_file() and relative in entry_events else [])
         if not any(_entry_digest(entry) == digest for entry in entries):
             findings.append(Finding("harness.hooks-drift",
                                     "Managed hook entry changed or disappeared inside a shared config file; review and reinstall it.",
@@ -349,12 +362,13 @@ def cursor_response(receipt: dict, event: str, payload: dict) -> dict:
 
 
 def stop_block_response(receipt: dict) -> dict:
-    """Claude Code/Codex Stop semantics: decision block re-injects feedback.
+    """Claude Code/Codex/Gemini Stop semantics: decision block re-injects feedback.
 
-    Both harnesses bound consecutive Stop blocks natively (Claude Code caps at
-    eight, Codex re-trusts hook edits), so the adapter always reports an honest
-    gate result and lets the platform bound the repair loop. A gate that could
-    not run (exit 2) is still a failure to prove completion, so it blocks too.
+    All three harnesses share the {decision, reason} output contract and bound
+    consecutive stop blocks natively (Claude Code caps at eight, Codex re-trusts
+    hook edits), so the adapter always reports an honest gate result and lets
+    the platform bound the repair loop. A gate that could not run (exit 2) is
+    still a failure to prove completion, so it blocks too.
     """
     if receipt["exit_code"] == 0:
         return {}
