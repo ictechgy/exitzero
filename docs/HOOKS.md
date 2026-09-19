@@ -205,3 +205,8 @@ a receipt reference over stdio JSON-RPC. This is advisory — the agent
 chooses to call it — so prefer a real hook wherever one exists. The
 [agent-plugin directory](../agent-plugin/) packages the server with a
 skill and `.mcp.json` for Agent Plugins-style hosts.
+
+Verified live 2026-09-19 through the official MCP Inspector client over
+real stdio JSON-RPC: `tools/list` discovers `check_completion`, and the
+tool returns a structured `passed`/`failed` verdict plus receipt path on
+both clean and violating trees.
