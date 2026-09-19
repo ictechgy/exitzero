@@ -107,7 +107,12 @@ def load_policy(path: Path) -> dict:
     # (run, init --sync, report) shares this single regular-file guard.
     if os.path.lexists(path) and not path.is_file():
         raise ValueError(f"Policy must be a regular file: {path.name}")
-    policy = tomllib.loads(path.read_text(encoding="utf-8"))
+    return parse_policy(path.read_text(encoding="utf-8"))
+
+
+def parse_policy(text: str) -> dict:
+    """Validate policy text before a generator writes it to disk."""
+    policy = tomllib.loads(text)
     if set(policy) - {"version", "plugins", "checks", "harness", "requirements"}:
         raise ValueError("Unknown top-level policy key")
     if type(policy.get("version")) is not int or policy["version"] != 1:
@@ -192,9 +197,8 @@ def render_agents(policy: dict) -> str:
     return "\n".join(lines)
 
 
-def sync_agents(root: Path, policy: dict) -> None:
-    path = safe_path(root, "AGENTS.md")
-    current = path.read_text(encoding="utf-8") if path.is_file() else ""
+def updated_agents(current: str, policy: dict) -> str:
+    """Prepare the managed section, preserving surrounding user guidance."""
     section = render_agents(policy)
     if BEGIN not in current and END not in current:
         updated = current.rstrip() + ("\n\n" if current.strip() else "") + section + "\n"
@@ -203,4 +207,10 @@ def sync_agents(root: Path, policy: dict) -> None:
         updated = current[:start] + section + current[end:]
     else:
         raise ValueError("AGENTS.md has ambiguous managed section markers; repair them first")
-    write_atomic(path, updated)
+    return updated
+
+
+def sync_agents(root: Path, policy: dict) -> None:
+    path = safe_path(root, "AGENTS.md")
+    current = path.read_text(encoding="utf-8") if path.is_file() else ""
+    write_atomic(path, updated_agents(current, policy))

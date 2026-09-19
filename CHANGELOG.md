@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `plugin incident-kit` scaffolds deliberately failing regression/neighboring
+  tests and connects quality/command checks plus requirement mappings to the
+  existing policy, preserving manual AGENTS guidance and existing files.
+
 - `doctor [--adapter NAME] [--format json]` diagnoses project policy/AGENTS
   drift and installed client/Git hook setup without running verification
   commands. It catches disabled Cursor `failClosed` after reinstall, invalid

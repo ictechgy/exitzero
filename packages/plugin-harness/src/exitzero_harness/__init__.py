@@ -22,6 +22,7 @@ import uuid
 from exitzero.api import Context, Finding
 from exitzero.services import (BEGIN, END, cursor_hook_error, lint_installed,
                                render_agents, run_gate, safe_path)
+from .incident import incident_kit
 
 API_VERSION = 1
 
@@ -65,6 +66,7 @@ def register(registry: Any) -> None:
 
     registry.add_linter("harness.config", lint_config)
     registry.add_command("harness-eval", harness_eval)
+    registry.add_command("incident-kit", incident_kit)
 
 
 def harness_eval(context: Context, argv: list[str]) -> int:

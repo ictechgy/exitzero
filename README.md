@@ -136,6 +136,24 @@ From a checkout, the included example exercises all four check types:
 
 ## Put review requirements in the policy
 
+From this source checkout, turn a reported regression into a policy-linked kit:
+
+```sh
+exitzero plugin incident-kit --id negative-total \
+  --description 'A negative input silently produces the wrong total' \
+  --path 'src/**/*.py' --path 'tests/**/*.py' --path 'data/cases.json'
+```
+
+Use input paths that apply to your project; omit `--path` for `**/*.py`.
+The generator adds two deliberately failing unittest placeholders under
+`tests/incidents/negative-total/`, a test-quality check, a regression command,
+and a requirement mapping. Existing hooks/CI use the updated policy; no hooks
+are installed automatically. Fill in the reported case and a neighboring valid
+case, record a failing gate against the bug, repair it, and keep the passing
+receipt. Missing tests also fail. Existing kits are never overwritten, commands
+are not executed during generation, and the description is stored only in the
+kit's `incident.json`. Review descriptions before committing them.
+
 ```toml
 version = 1
 plugins = ["exitzero_verify", "exitzero_harness"]

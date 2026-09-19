@@ -69,6 +69,10 @@ There is no new plugin registration method; `doctor` is a reserved core command.
 
 Shared helpers: plugins may import `exitzero.api` and `exitzero.services`;
 every other core module is internal and outside the `API_VERSION` contract.
+Policy generators can use `parse_policy(text)` to validate a proposed policy
+without writing, and `updated_agents(current_text, policy)` to prepare a managed
+section while preserving manual guidance. Both raise on invalid inputs before
+the caller publishes changes.
 `exitzero.services.select_files(root, patterns)` returns sorted, deduplicated
 repository files; it rejects absolute paths, traversal, symlinks and
 secret-like paths. `exitzero.services.match_path(relative, patterns)` applies
@@ -139,6 +143,17 @@ section to `render_agents(policy)`, checks installed hook drift, validates
 explicitly listed `harness.config_files`, and reports `harness.rules` entries
 that contradict or duplicate each other. It must never read secret-like paths
 or execute config values.
+
+`exitzero plugin incident-kit --id NAME --description TEXT [--path GLOB ...]`
+adds an unfinished Python unittest regression kit, quality/command checks and a
+requirement mapping to the current policy, then synchronizes its AGENTS section.
+Inputs default to `**/*.py`; the generated test file is always included. The
+command has `reuse = false` and uses `python -B` to avoid stale test bytecode.
+Generation does not run checks or install hooks. Duplicate ids, existing kit
+directories, unsafe paths and ambiguous AGENTS markers fail before writing.
+Writes publish the tests before policy/AGENTS; an I/O failure may leave partial
+output to inspect, never a claimed successful kit. The placeholders deliberately
+fail and must be replaced by real regression and neighboring-behavior assertions.
 
 `exitzero plugin harness-eval --scenario PATH` replays a bounded scripted
 evaluation: PATH holds a `scenario.toml` (`schema_version = 1`, optional

@@ -133,6 +133,23 @@ exitzero init --profile python \
 
 ## 정책에 리뷰 요구사항 담기
 
+소스 체크아웃에서는 사고를 정책에 연결된 회귀 검사 틀로 만들 수 있습니다:
+
+```sh
+exitzero plugin incident-kit --id negative-total \
+  --description '음수 입력에서 합계가 조용히 잘못 계산됨' \
+  --path 'src/**/*.py' --path 'tests/**/*.py'
+```
+
+`--path`를 생략하면 `**/*.py`를 사용합니다. JSON 같은 입력도 반복 지정하세요.
+`tests/incidents/negative-total/`에 반드시 실패하는 테스트 자리표시자 두 개를
+만들고, 테스트 품질·회귀 명령 검사와 요구사항 연결을 기존 정책에 추가합니다.
+기존 훅과 CI가 같은 정책을 사용하며 새 훅은 자동 설치하지 않습니다. 실제 사고와
+인접 정상 사례의 검증문을 작성해 버그가 있을 때 실패하고 수정 후 통과하는
+영수증을 남기세요. 테스트 삭제도 실패합니다. 기존 키트는 덮어쓰지 않고 생성 중
+검사 명령을 실행하지 않습니다. 설명은 키트의 `incident.json`에만 저장되므로
+커밋 전에 내용을 검토하세요.
+
 ```toml
 version = 1
 plugins = ["exitzero_verify", "exitzero_harness"]
