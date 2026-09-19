@@ -169,11 +169,15 @@ exitzero init
 exitzero init --sync
 exitzero check --format json
 exitzero check --reuse --format json
+exitzero check --diff origin/main...HEAD --format json
 exitzero lint-config --format json
 exitzero hooks install --adapter cursor
+exitzero hooks install --adapter claude
+exitzero hooks install --adapter codex
 exitzero hooks install --adapter pre-commit
 exitzero hooks run --slot CI --format json
 exitzero report --format json
+exitzero report --format intoto   # unsigned in-toto Statement wrapping the latest receipt
 exitzero plugin harness-eval --scenario examples/eval-repair   # opt-in bounded eval
 exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP proxy
 exitzero plugin ledger-publish                                 # aggregate run record
@@ -184,7 +188,10 @@ configuration linters and verification checks. `lint-config` never executes
 verification commands. `plugin harness-eval` replays a scripted multi-turn
 scenario against the gate inside a temporary copy; each turn's expectations
 are scored, skipped scenarios are reported separately, and the report lands
-under `.exitzero/evals/`. See [the eval example](examples/eval-repair).
+under `.exitzero/evals/`. From the second turn onward each turn records
+`transitions` — SWE-bench-style `fail_to_pass`, `pass_to_pass` and the
+regression directions over check ids — so "what got fixed" and "what stayed
+green" are separate evidence. See [the eval example](examples/eval-repair).
 `plugin mcp-gateway` spawns one upstream MCP server and proxies stdio
 JSON-RPC; `tools/call` is authorized against TOML allow/deny patterns
 (deny-by-default) and every decision lands in `.exitzero/mcp-gateway/`
@@ -213,6 +220,10 @@ an untrusted cache. A check can opt out with `reuse = false` in its
 `[[checks]]` table — required for checks whose correctness depends on
 state outside hashed file inputs, such as `python.test-integrity`'s git
 baseline.
+
+`check --diff REF` limits verification to files changed against a git ref
+or range — the PR-scoped pattern documented in [the CI section](docs/HOOKS.md).
+It narrows evidence to the changed set; keep a full `check` on release paths.
 
 Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
 through exit codes:

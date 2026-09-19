@@ -154,3 +154,34 @@ Codes are 0 (pass), 1 (violation), 2 (configuration/execution/receipt error).
 Save `.exitzero/runs/*.json` as artifacts even when a command fails. Core slots
 are `PreToolUse`, `PostToolUse`, `pre-commit`, and `CI`; these names are an internal
 API, and adapters translate editor-specific event names.
+
+### CI verification pattern
+
+Re-run the gate in CI instead of trusting receipts an agent committed —
+receipts are unsigned local evidence. A typical PR job:
+
+```yaml
+- run: exitzero lint-config --format json
+- run: exitzero check --format json          # full gate on the merge checkout
+- run: exitzero check --diff origin/${{ github.base_ref }}...HEAD --format json
+  if: success()                              # optional: scoped per-file evidence
+- uses: actions/upload-artifact@v4
+  if: always()
+  with: { name: exitzero-receipts, path: .exitzero/runs/ }
+```
+
+`check --diff REF` restricts each check's file selection — and the recorded
+`input_files` — to paths changed against a git ref or range (anything
+`git diff` resolves, e.g. `origin/main...HEAD` for merge-base PR scope).
+Deleted, excluded and credential-like paths drop out; a check whose scope has
+no changed files records a vacuous pass with an empty `input_files`, and the
+receipt's `diff` field records the range. An unresolvable ref or missing git
+is an operational error (exit 2). `--diff` narrows verification scope — it is
+evidence about the changed set, not a substitute for the full gate on release
+paths.
+
+`exitzero report --format intoto` exports the latest receipt wrapped in an
+in-toto Statement v1 (`predicateType: https://exitzero.dev/attestations/gate/v1`)
+for archival or downstream attestation pipelines. The statement is unsigned;
+signing with an external key (sigstore, DSSE) is a deployment decision, not
+something the tool fabricates locally.

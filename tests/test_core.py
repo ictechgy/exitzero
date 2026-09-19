@@ -1169,5 +1169,87 @@ class TestIntegrityTests(unittest.TestCase):
         self.assertTrue(any("reduced from 1 to 0" in message for message in messages), messages)
 
 
+class DiffScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for args in (["init"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+            subprocess.run(["git", "-C", str(self.root), *args],
+                           capture_output=True, check=True, timeout=15)
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *args],
+                              capture_output=True, text=True, timeout=30)
+
+    def commit(self):
+        subprocess.run(["git", "-C", str(self.root), "add", "-A"],
+                       capture_output=True, check=True, timeout=15)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-m", "base", "--no-gpg-sign"],
+                       capture_output=True, check=True, timeout=15)
+
+    def init_and_commit(self):
+        result = self.cli("init")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.commit()
+
+    def test_diff_scopes_checks_to_changed_files(self):
+        self.init_and_commit()
+        # A committed broken file must not block a diff-scoped run that did
+        # not touch it; untracked files are outside `git diff HEAD` too.
+        (self.root / "old.py").write_text("def broken(:\n", encoding="utf-8")
+        self.commit()
+        (self.root / "note.txt").write_text("unrelated\n", encoding="utf-8")
+        result = self.cli("check", "--diff", "HEAD", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["diff"], "HEAD")
+        inputs = {check["id"]: check["input_files"] for check in payload["checks"]
+                  if check["kind"] != "config-lint"}
+        self.assertTrue(all(files == [] for files in inputs.values()), inputs)
+        # Now the broken file itself changes — it enters scope and fails.
+        (self.root / "old.py").write_text("def still_broken(:\n", encoding="utf-8")
+        result = self.cli("check", "--diff", "HEAD", "--format", "json")
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        syntax = next(check for check in payload["checks"] if check["id"] == "syntax")
+        self.assertEqual(syntax["input_files"], ["old.py"])
+        self.assertEqual(syntax["status"], "failed")
+
+    def test_diff_skips_deleted_and_unresolvable_ref_errors(self):
+        self.init_and_commit()
+        (self.root / "exitzero_sample.py").unlink()
+        result = self.cli("check", "--diff", "HEAD", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.cli("check", "--diff", "nosuchref", "--format", "json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("core.error", [f["rule"] for f in json.loads(result.stdout)["findings"]])
+
+    def test_reuse_field_must_be_boolean(self):
+        self.init_and_commit()
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text().replace(
+            'id = "syntax"', 'id = "syntax"\nreuse = "yes"'))
+        result = self.cli("check", "--format", "json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("core.error", [f["rule"] for f in json.loads(result.stdout)["findings"]])
+
+    def test_report_intoto_wraps_latest_receipt(self):
+        self.init_and_commit()
+        check = self.cli("check", "--format", "json")
+        self.assertEqual(check.returncode, 0)
+        result = self.cli("report", "--format", "intoto")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        statement = json.loads(result.stdout)
+        self.assertEqual(statement["_type"], "https://in-toto.io/Statement/v1")
+        self.assertTrue(statement["predicateType"].startswith("https://"))
+        predicate = statement["predicate"]
+        self.assertEqual(predicate["run_id"], json.loads(check.stdout)["run_id"])
+        subject = statement["subject"][0]
+        canonical = json.dumps(predicate, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False).encode("utf-8")
+        self.assertEqual(subject["digest"]["sha256"], hashlib.sha256(canonical).hexdigest())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -264,6 +264,37 @@ def _apply_deletes(turn: dict[str, Any], target_root: Path) -> None:
         target.unlink()
 
 
+def _check_statuses(receipt: dict[str, Any]) -> dict[str, str]:
+    """Extract check id -> status from one gate receipt for transition scoring."""
+    return {entry["id"]: entry["status"]
+            for entry in receipt.get("checks", [])
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+            and isinstance(entry.get("status"), str)}
+
+
+def _transitions(previous: dict[str, str], current: dict[str, str]) -> dict[str, list[str]]:
+    """Classify check outcomes across two turns as SWE-bench-style evidence.
+
+    fail_to_pass marks checks a turn repaired, pass_to_pass marks checks kept
+    green, and the regression direction is recorded too so a turn that breaks
+    previously green checks is visible rather than silently absent.
+    """
+    def passed(status: str | None) -> bool | None:
+        if status is None:
+            return None
+        return status in ("passed", "reused")
+
+    result: dict[str, list[str]] = {"fail_to_pass": [], "pass_to_pass": [],
+                                   "pass_to_fail": [], "fail_to_fail": []}
+    for check_id in sorted(current):
+        before, after = passed(previous.get(check_id)), passed(current[check_id])
+        if before is None:
+            continue
+        key = f"{'pass' if before else 'fail'}_to_{'pass' if after else 'fail'}"
+        result[key].append(check_id)
+    return {key: ids for key, ids in result.items() if ids}
+
+
 def _run_scenario(context: Context, container: Path, directory: Path) -> dict[str, Any]:
     """Score one scenario; operational failures are ERROR, never silent passes."""
 
@@ -311,6 +342,7 @@ def _execute_scenario(context: Context, container: Path, directory: Path) -> dic
         policy_name = context.policy_path.relative_to(context.root).as_posix()
         ignored = frozenset({container} if container.is_relative_to(context.root) else set())
     turn_results: list[dict[str, Any]] = []
+    previous_statuses: dict[str, str] | None = None
     with tempfile.TemporaryDirectory(prefix=f"exitzero-eval-{directory.name}-") as temporary:
         temporary_root = Path(temporary)
         try:
@@ -339,6 +371,10 @@ def _execute_scenario(context: Context, container: Path, directory: Path) -> dic
                     # large trees; findings, ids and timing remain as evidence.
                     "receipt": {key: value for key, value in receipt.items() if key != "inputs"},
                 }
+                statuses = _check_statuses(receipt)
+                if previous_statuses is not None:
+                    entry["transitions"] = _transitions(previous_statuses, statuses)
+                previous_statuses = statuses
                 if "note" in turn:
                     entry["note"] = turn["note"]
                 turn_results.append(entry)

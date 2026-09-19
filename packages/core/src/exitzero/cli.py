@@ -1,5 +1,6 @@
 """Public command-line interface; check outcomes always come from the runner."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -40,6 +41,8 @@ def parser() -> argparse.ArgumentParser:
         if name == "check":
             child.add_argument("--reuse", action="store_true",
                                help="Reuse passing check results when a check's selected inputs are unchanged since a prior receipt")
+            child.add_argument("--diff", metavar="REF",
+                               help="Limit checks to files changed relative to a git ref or range such as origin/main...HEAD")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
     installer = hooks.add_parser("install")
     installer.add_argument("--adapter", choices=("cursor", "claude", "codex", "pre-commit"), default="cursor")
@@ -50,7 +53,7 @@ def parser() -> argparse.ArgumentParser:
                         default="stop")
     hook_run.add_argument("--format", choices=("human", "json"), default="human")
     report = commands.add_parser("report")
-    report.add_argument("--format", choices=("human", "json", "sarif"), default="human")
+    report.add_argument("--format", choices=("human", "json", "sarif", "intoto"), default="human")
     plugin = commands.add_parser("plugin")
     plugin.add_argument("name")
     plugin.add_argument("args", nargs=argparse.REMAINDER)
@@ -103,9 +106,29 @@ def _scrub(value: object) -> str:
     return _CONTROL.sub(lambda match: f"\\x{ord(match.group(0)):02x}", str(value))
 
 
+def _intoto(receipt: dict) -> dict:
+    """Wrap a receipt in an unsigned in-toto Statement v1 for CI archival.
+
+    The statement attests that this receipt exists as produced by the gate;
+    signatures stay out of scope — local receipts are unsigned evidence.
+    """
+    payload = json.dumps(receipt, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False).encode("utf-8")
+    return {
+        "_type": "https://in-toto.io/Statement/v1",
+        "subject": [{"name": receipt.get("receipt") or f"run-{receipt.get('run_id', 'unknown')}",
+                     "digest": {"sha256": hashlib.sha256(payload).hexdigest()}}],
+        "predicateType": "https://exitzero.dev/attestations/gate/v1",
+        "predicate": receipt,
+    }
+
+
 def emit(receipt: dict, output: str) -> None:
     if output == "sarif":
         print(json.dumps(_sarif(receipt), ensure_ascii=False, sort_keys=True))
+        return
+    if output == "intoto":
+        print(json.dumps(_intoto(receipt), ensure_ascii=False, sort_keys=True))
         return
     if output == "json":
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
@@ -199,7 +222,8 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     if args.command in {"check", "lint-config"}:
         receipt = run(root, args.policy, args.command,
-                      reuse=args.command == "check" and args.reuse)
+                      reuse=args.command == "check" and args.reuse,
+                      diff=args.diff if args.command == "check" else None)
         emit(receipt, args.format)
         return receipt["exit_code"]
     if args.command == "hooks" and args.hook_command == "run":
