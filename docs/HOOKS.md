@@ -69,6 +69,14 @@ against [Cursor's official reference](https://cursor.com/docs/hooks) on 2026-09-
 Cursor protocol fixtures exercise the adapter locally. A live Cursor session is
 a separate integration check; do not infer it from installation output.
 
+Live verification on Cursor Agent 2026.09.18 confirmed the interactive agent
+loop fires the installed `stop` hook, delivers `followup_message` on gate
+failure and honors `loop_limit` so the repair turn is bounded. The same build's
+headless `cursor agent -p` mode loads project hooks (tool events such as
+`beforeShellExecution` fire) but never invokes `stop` — that call site exists
+only in the interactive loop. Do not rely on the stop gate in `-p` pipelines;
+use tool-event hooks or the CI slot there instead.
+
 ## Git pre-commit
 
 ```sh
