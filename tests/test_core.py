@@ -830,5 +830,213 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn("harness.config", rules)
 
 
+class AdapterHookTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def cli(self, *args, stdin=None):
+        return subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *args],
+                              input=stdin, capture_output=True, text=True, timeout=30)
+
+    def init(self):
+        result = self.cli("init")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def install(self, adapter):
+        result = self.cli("hooks", "install", "--adapter", adapter)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def run_hook(self, adapter, payload, *extra):
+        return self.cli("hooks", "run", "--adapter", adapter, "--event", "stop",
+                        *extra, stdin=json.dumps(payload))
+
+    def break_source(self):
+        (self.root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+
+    def lint_rules(self):
+        result = self.cli("lint-config", "--format", "json")
+        payload = json.loads(result.stdout)
+        return payload, [f["rule"] for f in payload["findings"]]
+
+    def stop_entries(self, path):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [entry for group in data["hooks"]["Stop"] for entry in group["hooks"]]
+
+    def test_claude_install_writes_nested_stop_entry_and_manifest_digest(self):
+        self.init()
+        result = self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        entries = self.stop_entries(settings)
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["type"], "command")
+        self.assertEqual(entry["timeout"], 120)
+        self.assertIn("hooks run --adapter claude --event stop", entry["command"])
+        self.assertIn("allowManagedHooksOnly", result.stdout)
+        manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
+        self.assertIn(".claude/settings.json", manifest["entries"])
+        self.assertNotIn(".claude/settings.json", manifest["files"])
+        self.assertEqual(len(manifest["entries"][".claude/settings.json"]), 64)
+        self.assertFalse(data.get("allowManagedHooksOnly"))
+
+    def test_codex_install_writes_dedicated_hooks_file_with_file_digest(self):
+        self.init()
+        result = self.install("codex")
+        self.assertIn("trust", result.stdout.lower())
+        entries = self.stop_entries(self.root / ".codex/hooks.json")
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["timeout"], 120)
+        self.assertIn("--adapter codex", entries[0]["command"])
+        manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
+        self.assertIn(".codex/hooks.json", manifest["files"])
+        self.assertNotIn(".codex/hooks.json", manifest["entries"])
+
+    def test_cursor_install_includes_loop_limit_fail_closed_and_timeout(self):
+        self.init()
+        # Existing foreign entries must survive installation.
+        hooks_path = self.root / ".cursor/hooks.json"
+        hooks_path.parent.mkdir()
+        hooks_path.write_text(json.dumps({"version": 1, "hooks": {"stop": [
+            {"command": "foreign-tool --gate", "loop_limit": 3}]}}), encoding="utf-8")
+        self.install("cursor")
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+        stops = data["hooks"]["stop"]
+        self.assertEqual(len(stops), 2)
+        self.assertEqual(stops[0], {"command": "foreign-tool --gate", "loop_limit": 3})
+        owned = stops[1]
+        self.assertEqual(owned["loop_limit"], 1)
+        self.assertIs(owned["failClosed"], True)
+        self.assertEqual(owned["timeout"], 120)
+        manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
+        self.assertIn(".cursor/hooks.json", manifest["files"])
+
+    def test_reinstall_is_idempotent_and_drops_stale_entries(self):
+        self.init()
+        self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        first = settings.read_text(encoding="utf-8")
+        self.install("claude")
+        self.assertEqual(settings.read_text(encoding="utf-8"), first)
+        # A stale exitzero entry from an older root must be pruned on reinstall;
+        # foreign entries stay untouched.
+        data = json.loads(first)
+        data["hooks"]["Stop"].append({"hooks": [
+            {"type": "command", "command": "/old/root exitzero hooks run --adapter claude --event stop"},
+            {"type": "command", "command": "foreign --check"}]})
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        self.install("claude")
+        entries = self.stop_entries(settings)
+        commands = [entry["command"] for entry in entries]
+        self.assertEqual(len(entries), 2)
+        self.assertIn("foreign --check", commands)
+        self.assertNotIn("/old/root exitzero hooks run --adapter claude --event stop", commands)
+
+    def test_install_preserves_unrelated_settings_keys(self):
+        self.init()
+        settings = self.root / ".claude/settings.json"
+        settings.parent.mkdir()
+        settings.write_text(json.dumps({"theme": "dark", "permissions": {"allow": ["Read"]}}),
+                            encoding="utf-8")
+        self.install("claude")
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        self.assertEqual(data["theme"], "dark")
+        self.assertEqual(data["permissions"], {"allow": ["Read"]})
+        self.assertEqual(len(self.stop_entries(settings)), 1)
+
+    def test_claude_failure_returns_decision_block_and_pass_returns_empty(self):
+        self.init()
+        self.break_source()
+        result = self.run_hook("claude", {})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("Receipt:", payload["reason"])
+        receipt = payload["reason"].split("Receipt: ")[1].split(". ")[0]
+        self.assertTrue((self.root / receipt).is_file())
+        (self.root / "broken.py").write_text("def broken():\n    return 1\n")
+        result = self.run_hook("claude", {})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+
+    def test_codex_failure_returns_decision_block(self):
+        self.init()
+        self.break_source()
+        result = self.run_hook("codex", {"session_id": "abc"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("exitzero failed", payload["reason"])
+
+    def test_invalid_json_persists_receipt_and_exits_two(self):
+        self.init()
+        for adapter in ("claude", "codex"):
+            result = self.cli("hooks", "run", "--adapter", adapter, "--event", "stop",
+                              stdin="{not json")
+            self.assertEqual(result.returncode, 2, adapter + result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertIn("error", payload)
+            self.assertTrue((self.root / payload["receipt"]).is_file())
+
+    def test_adapter_rejects_unsupported_events(self):
+        self.init()
+        for adapter in ("claude", "codex"):
+            result = self.cli("hooks", "run", "--adapter", adapter, "--event", "preToolUse",
+                              stdin="{}")
+            self.assertEqual(result.returncode, 2, adapter)
+            self.assertIn("does not handle event", result.stderr)
+
+    def test_lint_ignores_unrelated_shared_settings_edits(self):
+        self.init()
+        self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["theme"] = "light"
+        data["hooks"]["Stop"].append({"hooks": [{"type": "command", "command": "foreign"}]})
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertEqual(payload["exit_code"], 0, payload)
+        self.assertNotIn("harness.hooks-drift", rules)
+
+    def test_lint_flags_managed_entry_edit_and_removal(self):
+        self.init()
+        self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 30
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertEqual(payload["exit_code"], 1)
+        self.assertIn("harness.hooks-drift", rules)
+        # Deleting the managed entry also drifts.
+        data["hooks"]["Stop"][0]["hooks"] = []
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertIn("harness.hooks-drift", rules)
+
+    def test_lint_warns_when_managed_hooks_only_disables_gate(self):
+        self.init()
+        self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["allowManagedHooksOnly"] = True
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertIn("harness.hooks-managed-only", rules)
+        self.assertEqual(payload["exit_code"], 0, payload)
+
+    def test_invalid_existing_settings_block_install(self):
+        self.init()
+        settings = self.root / ".claude/settings.json"
+        settings.parent.mkdir()
+        settings.write_text("{broken json", encoding="utf-8")
+        result = self.cli("hooks", "install", "--adapter", "claude")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("exitzero:", result.stderr + result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

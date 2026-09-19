@@ -1,4 +1,5 @@
 """IDE adapters delegate to the shared runner and preserve existing hooks."""
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -19,6 +20,23 @@ CURSOR_EVENTS = {
     "stop": "PostToolUse",
 }
 
+# Claude Code and Codex expose a blocking Stop hook; completion gating maps to
+# the same PostToolUse slot. Other events are reachable through generic slots.
+STOP_ONLY_EVENTS = {"stop": "PostToolUse"}
+ADAPTER_EVENTS = {
+    "cursor": CURSOR_EVENTS,
+    "claude": STOP_ONLY_EVENTS,
+    "codex": STOP_ONLY_EVENTS,
+}
+# Hook runtimes read these entry fields; failClosed keeps hook failures from
+# proceeding silently, and timeout bounds a hung gate command.
+HOOK_TIMEOUT_SECONDS = 120
+HOOK_MANAGED_NOTE = {
+    "claude": "Approve or trust the project hook on the next Claude Code session; managed allowManagedHooksOnly policies can disable project hooks entirely.",
+    "codex": "Codex gates hooks behind trust review; run /hooks or approve the hook prompt before the stop gate can fire.",
+    "cursor": "",
+}
+
 
 def _launcher() -> list[str]:
     checkout = Path(__file__).resolve().parents[4] / "bin" / "exitzero"
@@ -28,9 +46,13 @@ def _launcher() -> list[str]:
 
 
 def expected_cursor_command(root: Path, policy_path: Path, slot: str = "PostToolUse") -> str:
+    return expected_adapter_command(root, policy_path, "cursor", slot)
+
+
+def expected_adapter_command(root: Path, policy_path: Path, adapter: str, slot: str = "PostToolUse") -> str:
     event = "stop" if slot == "PostToolUse" else "preToolUse"
     return shlex.join([*_launcher(), "--root", str(root), "--policy", str(policy_path.relative_to(root)),
-                       "hooks", "run", "--adapter", "cursor", "--event", event])
+                       "hooks", "run", "--adapter", adapter, "--event", event])
 
 
 def _manifest(root: Path) -> dict:
@@ -44,15 +66,63 @@ def _manifest(root: Path) -> dict:
         value = json.loads(path.read_text(encoding="utf-8"))
         if (not isinstance(value, dict) or type(value.get("version")) is not int
                 or value["version"] != 1 or not isinstance(value.get("files"), dict)
-                or any(not isinstance(digest, str) or len(digest) != 64 for digest in value["files"].values())):
+                or any(not isinstance(digest, str) or len(digest) != 64 for digest in value["files"].values())
+                or ("entries" in value and (not isinstance(value["entries"], dict)
+                    or any(not isinstance(digest, str) or len(digest) != 64
+                           for digest in value["entries"].values())))):
             raise ValueError("Invalid hook installation manifest")
+        value.setdefault("entries", {})
         return value
-    return {"version": 1, "files": {}}
+    return {"version": 1, "files": {}, "entries": {}}
 
 
 def installed_inputs(root: Path) -> list[str]:
     """Include exactly the hook files inspected by the configuration linter."""
-    return [".exitzero/hooks.json", *_manifest(root)["files"]]
+    manifest = _manifest(root)
+    return [".exitzero/hooks.json", *manifest["files"], *manifest["entries"]]
+
+
+def _entry_digest(entry: dict) -> str:
+    """Canonical digest of one managed hook entry inside a shared config file."""
+    return hashlib.sha256(json.dumps(entry, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _settings_hook_entry(command: str) -> dict:
+    """Nested Claude Code/Codex Stop entry used by the shared settings shape."""
+    return {"hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SECONDS}]}
+
+
+def _exitzero_managed(adapter: str, command: object) -> bool:
+    """Detect a stale exitzero-owned entry so reinstalls do not stack duplicates."""
+    return isinstance(command, str) and "hooks run" in command and f"--adapter {adapter}" in command
+
+
+def _merge_settings_hooks(data: dict, command: str, adapter: str) -> dict:
+    hooks = data.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        raise ValueError("Existing hook configuration has a non-object 'hooks'")
+    groups = hooks.setdefault("Stop", [])
+    if not isinstance(groups, list):
+        raise ValueError("Existing 'Stop' hooks must be a list")
+    owned = None
+    for group in groups:
+        if not isinstance(group, dict):
+            raise ValueError("Existing 'Stop' hook groups must be objects")
+        entries = group.get("hooks")
+        if not isinstance(entries, list):
+            raise ValueError("Existing 'Stop' hook groups require a 'hooks' list")
+        # Drop stale exitzero entries (older root/policy paths) while keeping
+        # foreign hooks untouched; only the current command may stay.
+        entries[:] = [entry for entry in entries
+                      if not (isinstance(entry, dict) and entry.get("command") != command
+                              and _exitzero_managed(adapter, entry.get("command")))]
+        for entry in entries:
+            if isinstance(entry, dict) and entry.get("command") == command:
+                owned = group
+    groups[:] = [group for group in groups if group["hooks"]]
+    if owned is None:
+        groups.append(_settings_hook_entry(command))
+    return data
 
 
 def cursor_hook_error(entry: object) -> str | None:
@@ -70,6 +140,7 @@ def cursor_hook_error(entry: object) -> str | None:
 
 def install(root: Path, policy_path: Path, adapter: str) -> str:
     manifest = _manifest(root)
+    entry_digest: str | None = None
     if adapter == "cursor":
         relative = ".cursor/hooks.json"
         path = safe_path(root, relative)
@@ -83,10 +154,34 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         command = expected_cursor_command(root, policy_path)
         owned = next((h for h in hooks if h.get("type", "command") == "command" and h.get("command") == command), None)
         if owned is None:
-            hooks.append({"command": command, "loop_limit": 1})
+            hooks.append({"command": command, "loop_limit": 1,
+                          "failClosed": True, "timeout": HOOK_TIMEOUT_SECONDS})
         else:
             owned.setdefault("loop_limit", 1)
+            owned.setdefault("failClosed", True)
+            owned.setdefault("timeout", HOOK_TIMEOUT_SECONDS)
         content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    elif adapter in ("claude", "codex"):
+        # Both read a Claude Code-style nested Stop list. Claude stores it in a
+        # shared settings.json so drift is tracked per entry, not per file.
+        relative = ".claude/settings.json" if adapter == "claude" else ".codex/hooks.json"
+        path = safe_path(root, relative)
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                raise ValueError("Invalid existing hook configuration") from None
+            if not isinstance(data, dict):
+                raise ValueError("Existing hook configuration must be a JSON object")
+        else:
+            data = {}
+        command = expected_adapter_command(root, policy_path, adapter)
+        data = _merge_settings_hooks(data, command, adapter)
+        content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+        if adapter == "claude":
+            entry = next(entry for group in data["hooks"]["Stop"]
+                         for entry in group["hooks"] if entry.get("command") == command)
+            entry_digest = _entry_digest(entry)
     else:
         # Git executes hooks relative to the worktree root. Respect custom hook paths.
         result = subprocess.run(["git", "-C", str(root), "rev-parse", "--git-path", "hooks/pre-commit"],
@@ -108,10 +203,30 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
     write_atomic(path, content)
     if adapter == "pre-commit":
         path.chmod(path.stat().st_mode | 0o111)
-    manifest["files"][relative] = sha256_file(path)
+    if entry_digest is not None:
+        manifest["entries"][relative] = entry_digest
+        manifest["files"].pop(relative, None)
+    else:
+        manifest["files"][relative] = sha256_file(path)
+        manifest["entries"].pop(relative, None)
     write_atomic(safe_path(root, ".exitzero/hooks.json"),
                  json.dumps(manifest, sort_keys=True, indent=2) + "\n")
     return relative
+
+
+def _claude_stop_entries(path: Path) -> list[dict]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return []
+    hooks = data.get("hooks") if isinstance(data, dict) else None
+    groups = hooks.get("Stop") if isinstance(hooks, dict) else None
+    entries: list[dict] = []
+    for group in groups if isinstance(groups, list) else []:
+        for entry in group.get("hooks", []) if isinstance(group, dict) else []:
+            if isinstance(entry, dict):
+                entries.append(entry)
+    return entries
 
 
 def lint_installed(context: Context) -> list[Finding]:
@@ -121,6 +236,23 @@ def lint_installed(context: Context) -> list[Finding]:
         path = safe_path(context.root, relative)
         if not path.is_file() or sha256_file(path) != digest:
             findings.append(Finding("harness.hooks-drift", "Installed hook changed or disappeared; review and reinstall it.", relative))
+    for relative, digest in manifest["entries"].items():
+        path = safe_path(context.root, relative)
+        entries = _claude_stop_entries(path) if path.is_file() else []
+        if not any(_entry_digest(entry) == digest for entry in entries):
+            findings.append(Finding("harness.hooks-drift",
+                                    "Managed hook entry changed or disappeared inside a shared config file; review and reinstall it.",
+                                    relative))
+    settings = safe_path(context.root, ".claude/settings.json")
+    if settings.is_file():
+        try:
+            data = json.loads(settings.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            data = None
+        if isinstance(data, dict) and data.get("allowManagedHooksOnly") is True:
+            findings.append(Finding("harness.hooks-managed-only",
+                                    "allowManagedHooksOnly disables project hooks; the installed stop gate will not fire.",
+                                    ".claude/settings.json", severity="warning"))
     return findings
 
 
@@ -202,3 +334,16 @@ def cursor_response(receipt: dict, event: str, payload: dict) -> dict:
     if event == "stop" and not passed and payload.get("status") != "aborted" and payload.get("loop_count", 0) < 1:
         return {"followup_message": _cursor_failure_feedback(receipt)}
     return {}
+
+
+def stop_block_response(receipt: dict) -> dict:
+    """Claude Code/Codex Stop semantics: decision block re-injects feedback.
+
+    Both harnesses bound consecutive Stop blocks natively (Claude Code caps at
+    eight, Codex re-trusts hook edits), so the adapter always reports an honest
+    gate result and lets the platform bound the repair loop. A gate that could
+    not run (exit 2) is still a failure to prove completion, so it blocks too.
+    """
+    if receipt["exit_code"] == 0:
+        return {}
+    return {"decision": "block", "reason": _cursor_failure_feedback(receipt)}

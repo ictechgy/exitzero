@@ -77,6 +77,51 @@ headless `cursor agent -p` mode loads project hooks (tool events such as
 only in the interactive loop. Do not rely on the stop gate in `-p` pipelines;
 use tool-event hooks or the CI slot there instead.
 
+## Claude Code
+
+```sh
+exitzero hooks install --adapter claude
+exitzero lint-config
+```
+
+Installation appends one `{type: "command", command, timeout: 120}` entry to
+`hooks.Stop[].hooks[]` in project `.claude/settings.json`. The file is shared
+configuration: unrelated keys and foreign hook groups are preserved, stale
+exitzero entries from older checkouts are pruned, and repeating installation is
+idempotent. Instead of a whole-file fingerprint, `.exitzero/hooks.json` records
+a canonical digest of the managed entry only, so editing unrelated settings does
+not report drift while changing or deleting the managed entry does. If
+`allowManagedHooksOnly` is set, lint-config warns that the installed gate cannot
+fire.
+
+The stop adapter reads the hook JSON object from stdin. A failed check returns
+`{"decision": "block", "reason": ...}`; the reason carries the same bounded
+receipt reference and diagnostic summary as the Cursor feedback. A passing check
+returns `{}`. Claude Code bounds consecutive Stop blocks natively, so the
+adapter reports the honest gate result on every stop instead of suppressing
+repeat feedback. Gate violations exit 0 with the JSON decision; operational or
+invalid-input errors exit 2 and still persist a receipt.
+
+Claude Code may ask to approve the project hook on the next session before it
+fires; managed policies can disable project hooks entirely. Live Claude Code
+verification has not been performed — protocol behavior is covered by tests
+only.
+
+## Codex
+
+```sh
+exitzero hooks install --adapter codex
+exitzero lint-config
+```
+
+Codex uses the same nested `hooks.Stop[].hooks[]` shape, stored in dedicated
+`.codex/hooks.json` rather than a shared settings file, so drift is tracked by
+whole-file fingerprint. The stdin/stdout contract is identical to the Claude
+adapter: `{"decision": "block", "reason": ...}` on failure, `{}` on pass, exit 2
+for operational errors. Codex gates hooks behind trust review; approve the hook
+prompt before the stop gate can fire. Live Codex verification has not been
+performed.
+
 ## Git pre-commit
 
 ```sh

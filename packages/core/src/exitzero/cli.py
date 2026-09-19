@@ -10,7 +10,7 @@ from urllib.parse import quote
 from . import __version__
 from .api import Context, HOOK_SLOTS
 from .files import safe_path, select_files, validate_relative, write_atomic
-from .hooks import CURSOR_EVENTS, cursor_response, install
+from .hooks import ADAPTER_EVENTS, HOOK_MANAGED_NOTE, cursor_response, install, stop_block_response
 from .loader import discover
 from .policy import DEFAULT_POLICY, load_policy, python_profile_policy, sync_agents
 from .runner import run
@@ -42,11 +42,12 @@ def parser() -> argparse.ArgumentParser:
                                help="Reuse passing check results when a check's selected inputs are unchanged since a prior receipt")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
     installer = hooks.add_parser("install")
-    installer.add_argument("--adapter", choices=("cursor", "pre-commit"), default="cursor")
+    installer.add_argument("--adapter", choices=("cursor", "claude", "codex", "pre-commit"), default="cursor")
     hook_run = hooks.add_parser("run")
-    hook_run.add_argument("--adapter", choices=("generic", "cursor"), default="generic")
+    hook_run.add_argument("--adapter", choices=("generic", "cursor", "claude", "codex"), default="generic")
     hook_run.add_argument("--slot", choices=sorted(HOOK_SLOTS), default="CI")
-    hook_run.add_argument("--event", choices=sorted(CURSOR_EVENTS), default="stop")
+    hook_run.add_argument("--event", choices=sorted({event for events in ADAPTER_EVENTS.values() for event in events}),
+                        default="stop")
     hook_run.add_argument("--format", choices=("human", "json"), default="human")
     report = commands.add_parser("report")
     report.add_argument("--format", choices=("human", "json", "sarif"), default="human")
@@ -202,19 +203,38 @@ def main(argv: list[str] | None = None) -> int:
         emit(receipt, args.format)
         return receipt["exit_code"]
     if args.command == "hooks" and args.hook_command == "run":
-        if args.adapter == "cursor":
+        events = ADAPTER_EVENTS.get(args.adapter)
+        if events is not None:
+            if args.event not in events:
+                print(f"exitzero: adapter {args.adapter} does not handle event {args.event}; supported: {', '.join(sorted(events))}",
+                      file=sys.stderr)
+                return 2
+            if args.adapter == "cursor":
+                try:
+                    payload = json.loads(sys.stdin.read(1024 * 1024))
+                    if not isinstance(payload, dict) or type(payload.get("loop_count", 0)) is not int or payload.get("loop_count", 0) < 0:
+                        raise ValueError("Invalid Cursor payload")
+                except (ValueError, OSError, RecursionError):
+                    # Still execute and persist the actual gate outcome for every invocation.
+                    receipt = run(root, args.policy, "check", events[args.event], input_error=True)
+                    print(json.dumps({"error": "Invalid Cursor JSON input", "receipt": receipt["receipt"]}))
+                    return 2
+                receipt = run(root, args.policy, "check", events[args.event])
+                print(json.dumps(cursor_response(receipt, args.event, payload)))
+                # Cursor reads the JSON protocol; generic adapters expose unchanged gate codes.
+                return 0 if receipt["exit_code"] != 2 else 2
+            # Claude Code and Codex share the nested Stop contract: a JSON object
+            # on stdin, {"decision": "block", "reason": ...} to continue the turn.
             try:
                 payload = json.loads(sys.stdin.read(1024 * 1024))
-                if not isinstance(payload, dict) or type(payload.get("loop_count", 0)) is not int or payload.get("loop_count", 0) < 0:
-                    raise ValueError("Invalid Cursor payload")
+                if not isinstance(payload, dict):
+                    raise ValueError("Invalid hook payload")
             except (ValueError, OSError, RecursionError):
-                # Still execute and persist the actual gate outcome for every invocation.
-                receipt = run(root, args.policy, "check", CURSOR_EVENTS[args.event], input_error=True)
-                print(json.dumps({"error": "Invalid Cursor JSON input", "receipt": receipt["receipt"]}))
+                receipt = run(root, args.policy, "check", events[args.event], input_error=True)
+                print(json.dumps({"error": f"Invalid {args.adapter} JSON input", "receipt": receipt["receipt"]}))
                 return 2
-            receipt = run(root, args.policy, "check", CURSOR_EVENTS[args.event])
-            print(json.dumps(cursor_response(receipt, args.event, payload)))
-            # Cursor reads the JSON protocol; generic adapters expose unchanged gate codes.
+            receipt = run(root, args.policy, "check", events[args.event])
+            print(json.dumps(stop_block_response(receipt)))
             return 0 if receipt["exit_code"] != 2 else 2
         receipt = run(root, args.policy, "check", args.slot)
         emit(receipt, args.format)
@@ -252,7 +272,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         policy = load_policy(path)
         if args.command == "hooks":
-            print("Installed " + install(root, path, args.adapter) + ". Run lint-config to verify configuration.")
+            relative = install(root, path, args.adapter)
+            print("Installed " + relative + ". Run lint-config to verify configuration.")
+            note = HOOK_MANAGED_NOTE.get(args.adapter, "")
+            if note:
+                print(note)
             return 0
         registry = discover(policy["plugins"])
         if args.name not in registry.commands:
