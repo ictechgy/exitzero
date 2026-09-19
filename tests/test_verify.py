@@ -24,7 +24,8 @@ class VerifyPluginTests(unittest.TestCase):
         register(registry)
         self.assertEqual(
             set(registry.checks),
-            {"python.syntax", "python.imports", "python.test-quality", "command"},
+            {"python.syntax", "python.imports", "python.test-quality",
+             "python.test-integrity", "command"},
         )
         self.assertEqual(registry.check_inputs, {"python.imports": exitzero_verify.import_inputs})
 

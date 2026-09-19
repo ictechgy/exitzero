@@ -98,10 +98,11 @@ def _reusable_checks(root: Path, current_inputs: dict[str, list[str]], current_s
     list identical to today's selection, every listed input still hashes to the
     recorded value, and the source entry reported no findings. Added, deleted
     or modified inputs re-run the check; checks with no declared file inputs
-    can never prove their inputs are stable and always re-run.
+    can never prove their inputs are stable and always re-run, as do checks
+    that opt out with ``reuse = false``.
     """
     reusable: dict[str, tuple[dict, dict]] = {}
-    wanted = {spec.id for spec in check_specs if current_inputs.get(spec.id)}
+    wanted = {spec.id for spec in check_specs if spec.reuse and current_inputs.get(spec.id)}
     for prior in _prior_check_receipts(root):
         if (prior.get("exit_code") not in (0, 1)
                 or prior.get("tool_version") != __version__

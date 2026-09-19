@@ -28,6 +28,7 @@ def register(registry: Any) -> None:
     registry.add_check("python.syntax", check_syntax)
     registry.add_check("python.imports", check_imports, inputs=import_inputs)
     registry.add_check("python.test-quality", check_test_quality)
+    registry.add_check("python.test-integrity", check_test_integrity)
     registry.add_check("command", check_command)
 
 
@@ -508,6 +509,183 @@ def check_test_quality(context: Context, spec: CheckSpec) -> list[Finding]:
                     findings.append(Finding(spec.id, "Test assertion is obviously constant", _relative(context.root, path), item.lineno))
                 elif isinstance(item, ast.Call) and _vacuous_unittest(item):
                     findings.append(Finding(spec.id, "Test assertion is obviously constant", _relative(context.root, path), item.lineno))
+    return findings
+
+
+_SKIP_MARKERS = {
+    ("pytest", "mark", "skip"), ("pytest", "mark", "skipif"),
+    ("pytest", "mark", "xfail"), ("pytest", "skip"), ("pytest", "xfail"),
+    ("unittest", "skip"), ("unittest", "skipIf"), ("unittest", "skipUnless"),
+    ("unittest", "expectedFailure"), ("self", "skipTest"),
+}
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
+    """Run one bounded git read; missing tools become operational errors."""
+    try:
+        return subprocess.run(["git", "-C", str(root), *args],
+                              capture_output=True, text=True, timeout=15, check=False)
+    except FileNotFoundError:
+        raise ValueError("python.test-integrity requires a git executable on PATH") from None
+    except subprocess.TimeoutExpired:
+        raise ValueError("git operation for python.test-integrity timed out") from None
+
+
+def _name_status(output: str) -> list[tuple[str, str, str | None]]:
+    """Parse NUL-separated ``git diff --name-status -z`` records."""
+    fields = output.split("\0")
+    entries: list[tuple[str, str, str | None]] = []
+    index = 0
+    while index < len(fields):
+        status = fields[index]
+        if not status:
+            index += 1
+            continue
+        if status[0] in ("R", "C"):
+            if index + 2 >= len(fields):
+                break
+            entries.append((status[0], fields[index + 1], fields[index + 2]))
+            index += 3
+        else:
+            if index + 1 >= len(fields):
+                break
+            entries.append((status[0], fields[index + 1], None))
+            index += 2
+    return entries
+
+
+def _test_stats(source: str) -> tuple[set[str], int, dict[str, int]] | None:
+    """Count test cases, assertions and suppression markers in one source.
+
+    Returns ``None`` when the source cannot be parsed so callers can decide
+    whether that is an analyzable baseline or a weakened worktree file.
+    Assertions are ``assert`` statements, ``self.assert*`` calls and
+    ``pytest.raises`` expectations; markers are attribute chains such as
+    ``pytest.mark.skip`` that neutralize a test without removing it.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return None
+    tests: set[str] = set()
+    assertions = 0
+    markers: dict[str, int] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.startswith("test"):
+            tests.add(node.name)
+        elif isinstance(node, ast.Assert):
+            assertions += 1
+        elif isinstance(node, ast.Call):
+            chain = _attribute_chain(node.func) if isinstance(node.func, (ast.Attribute, ast.Name)) else None
+            if chain and (len(chain) >= 2 and chain[0] == "self" and chain[1].startswith("assert")
+                          or tuple(chain) == ("pytest", "raises")):
+                assertions += 1
+        elif isinstance(node, ast.Attribute):
+            chain = _attribute_chain(node)
+            if chain and tuple(chain) in _SKIP_MARKERS:
+                key = ".".join(chain)
+                markers[key] = markers.get(key, 0) + 1
+    return tests, assertions, markers
+
+
+def _validate_integrity_options(options: dict[str, Any]) -> tuple[str, bool, bool, int]:
+    if not isinstance(options, dict):
+        raise ValueError("python.test-integrity options must be a table")
+    if set(options).difference({"base", "allow_deletions", "allow_skip_markers", "max_removed_assertions"}):
+        raise ValueError("unsupported python.test-integrity option")
+    base = options.get("base", "HEAD")
+    # A leading dash would smuggle a git flag through the ref argument.
+    if not isinstance(base, str) or not base.strip() or base.startswith("-"):
+        raise ValueError("python.test-integrity base must be a non-empty git ref")
+    deletions = options.get("allow_deletions", False)
+    markers = options.get("allow_skip_markers", False)
+    if not isinstance(deletions, bool) or not isinstance(markers, bool):
+        raise ValueError("allow_deletions and allow_skip_markers must be booleans")
+    removed = options.get("max_removed_assertions", 0)
+    if isinstance(removed, bool) or not isinstance(removed, int) or removed < 0:
+        raise ValueError("max_removed_assertions must be a nonnegative integer")
+    return base, deletions, markers, removed
+
+
+def _compare_test_file(context: Context, spec: CheckSpec, base: str, prefix: str,
+                       baseline_path: str, worktree_path: str,
+                       allow_skip_markers: bool, max_removed: int) -> list[Finding]:
+    """Compare one baseline test file against its worktree successor."""
+    from collections import Counter
+    from exitzero.services import safe_path
+
+    show = _git(context.root, "show", f"{base}:{prefix}{baseline_path}")
+    if show.returncode != 0:
+        return [Finding(spec.id, "Baseline test source cannot be read", baseline_path)]
+    baseline_stats = _test_stats(show.stdout)
+    if baseline_stats is None:
+        return [Finding(spec.id, "Baseline test source cannot be analyzed", baseline_path)]
+    try:
+        current_text = safe_path(context.root, worktree_path).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        current_text = None
+    current_stats = _test_stats(current_text) if current_text is not None else None
+    baseline_tests, baseline_assertions, baseline_markers = baseline_stats
+    current_tests, current_assertions, current_markers = (
+        current_stats if current_stats is not None else (set(), 0, {}))
+    findings: list[Finding] = []
+    removed = sorted(baseline_tests - current_tests)
+    if removed:
+        findings.append(Finding(spec.id, "Test case(s) removed: " + ", ".join(removed[:5])
+                                + ("..." if len(removed) > 5 else ""), worktree_path))
+    dropped = baseline_assertions - current_assertions
+    if dropped > max_removed:
+        findings.append(Finding(spec.id, f"Test assertions reduced from {baseline_assertions} to {current_assertions}",
+                                worktree_path))
+    if not allow_skip_markers:
+        added = Counter(current_markers)
+        added.subtract(Counter(baseline_markers))
+        for marker, count in sorted(added.items()):
+            if count > 0:
+                findings.append(Finding(spec.id, f"New test suppression marker {marker} (+{count})", worktree_path))
+    return findings
+
+
+def check_test_integrity(context: Context, spec: CheckSpec) -> list[Finding]:
+    """Detect weakened tests relative to a git baseline.
+
+    Flags test files deleted since ``base`` (default ``HEAD``), removed test
+    cases, newly introduced skip/xfail markers and net assertion loss in
+    modified test files. The baseline is git state outside hashed file
+    inputs, so this check declares no inputs and is never reused: unchanged
+    worktree files can still drift when the base ref moves.
+    """
+
+    base, allow_deletions, allow_skip_markers, max_removed = _validate_integrity_options(spec.options)
+    if _git(context.root, "rev-parse", "--verify", f"{base}^{{commit}}").returncode != 0:
+        raise ValueError(f"python.test-integrity base {base!r} is not a resolvable commit")
+    prefix_result = _git(context.root, "rev-parse", "--show-prefix")
+    if prefix_result.returncode != 0:
+        raise ValueError("python.test-integrity requires the project root inside a git worktree")
+    prefix = prefix_result.stdout.strip()
+    # --relative keeps diff paths root-relative even in a repository subdirectory.
+    diff = _git(context.root, "diff", "--name-status", "-z", "--relative", base, "--")
+    if diff.returncode != 0:
+        raise ValueError("git diff for python.test-integrity failed")
+    patterns = spec.paths
+    if not isinstance(patterns, (tuple, list)) or not all(isinstance(item, str) and item for item in patterns):
+        raise ValueError("check paths must be a non-empty sequence of non-empty strings")
+    from exitzero.services import match_path
+
+    findings: list[Finding] = []
+    for status, old, new in _name_status(diff.stdout):
+        if not match_path(old, patterns):
+            continue
+        if status == "D" or (status == "R" and (new is None or not match_path(new, patterns))):
+            if not allow_deletions:
+                detail = "Test file deleted relative to baseline" if status == "D" else \
+                    "Test file moved out of checked scope"
+                findings.append(Finding(spec.id, detail, old))
+            continue
+        if status in ("M", "T", "R"):
+            target = new if status == "R" else old
+            findings.extend(_compare_test_file(context, spec, base, prefix, old, target,
+                                               allow_skip_markers, max_removed))
     return findings
 
 

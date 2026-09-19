@@ -142,6 +142,7 @@ ordering in executable tests. See [the sample](examples/sample).
 | `python.syntax` | Python that cannot be parsed |
 | `python.imports` | Unresolved modules and missing statically declared local module symbols |
 | `python.test-quality` | No test cases, empty tests, obvious constant-only assertions |
+| `python.test-integrity` | Test files deleted since a git base ref, removed test cases, new skip/xfail markers, net assertion loss |
 | `command` | A configured test/lint command fails or exceeds its timeout |
 | Harness lint | Generated AGENTS drift, installed-hook drift, JSON/TOML config shape errors (Cursor and Claude hook documents, MCP server tables), repeated/conflicting rule IDs |
 
@@ -151,6 +152,15 @@ third-party API signatures. `allow_modules` explicitly trusts listed external
 module names. Test-quality analysis detects obvious problems; run real tests
 as well. Natural language contradictions in arbitrary AGENTS prose or Cursor
 rule files are not understood by v1.
+
+`python.test-integrity` compares worktree test files against a git baseline
+(`base` option, default `HEAD`; two-dot `git diff <base>` semantics covering
+staged and unstaged edits). It needs a git worktree and a resolvable base
+commit; a missing repo or ref is an operational error. Options
+`allow_deletions`, `allow_skip_markers` and `max_removed_assertions` relax
+individual categories. Set `reuse = false` on this check — the baseline lives
+outside hashed file inputs, so unchanged worktree files could otherwise reuse
+a stale pass after the base ref moves.
 
 ## Commands and outcomes
 
@@ -199,7 +209,10 @@ tool version and the policy hash — plugin code changes do not invalidate
 reuse, so re-verify after upgrading plugins. Treat `.exitzero/runs` as a
 trust boundary: receipts are unsigned local evidence, so use `--reuse`
 only where the runs directory is not attacker-writable or restored from
-an untrusted cache.
+an untrusted cache. A check can opt out with `reuse = false` in its
+`[[checks]]` table — required for checks whose correctness depends on
+state outside hashed file inputs, such as `python.test-integrity`'s git
+baseline.
 
 Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
 through exit codes:

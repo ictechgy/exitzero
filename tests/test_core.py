@@ -1038,5 +1038,136 @@ class AdapterHookTests(unittest.TestCase):
         self.assertIn("exitzero:", result.stderr + result.stdout)
 
 
+class TestIntegrityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for args in (["init"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+            subprocess.run(["git", "-C", str(self.root), *args],
+                           capture_output=True, check=True, timeout=15)
+        (self.root / "exitzero.toml").write_text(
+            'version = 1\nplugins = ["exitzero_verify"]\n'
+            '[[checks]]\nid = "integrity"\nkind = "python.test-integrity"\n'
+            'paths = ["tests/**/*.py"]\nreuse = false\n', encoding="utf-8")
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *args],
+                              capture_output=True, text=True, timeout=30)
+
+    def commit(self, *paths):
+        for path in paths:
+            full = self.root / path
+            full.parent.mkdir(parents=True, exist_ok=True)
+            if not full.exists():
+                full.write_text("", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "-A"],
+                       capture_output=True, check=True, timeout=15)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-m", "baseline", "--no-gpg-sign"],
+                       capture_output=True, check=True, timeout=15)
+
+    def check(self, expected):
+        result = self.cli("check", "--format", "json")
+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def write_test(self, name="tests/test_app.py", body=None):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body if body is not None else
+                        "def test_one():\n    assert app() == 1\n\ndef test_two():\n    assert app() == 2\n",
+                        encoding="utf-8")
+        return path
+
+    def test_deleted_test_file_is_flagged(self):
+        self.write_test()
+        self.commit()
+        (self.root / "tests/test_app.py").unlink()
+        payload = self.check(1)
+        messages = [f["message"] for f in payload["findings"]]
+        self.assertTrue(any("deleted" in message for message in messages), messages)
+
+    def test_removed_test_case_and_assertions_are_flagged(self):
+        self.write_test()
+        self.commit()
+        self.write_test(body="def test_one():\n    assert app() == 1\n")
+        payload = self.check(1)
+        messages = [f["message"] for f in payload["findings"]]
+        self.assertTrue(any("test_two" in message for message in messages), messages)
+        self.assertTrue(any("reduced from 2 to 1" in message for message in messages), messages)
+
+    def test_new_skip_markers_are_flagged(self):
+        self.write_test()
+        self.commit()
+        self.write_test(body=(
+            "import pytest\n\n@pytest.mark.skip(reason='later')\n"
+            "def test_one():\n    assert app() == 1\n\ndef test_two():\n    pytest.xfail('broken')\n"))
+        payload = self.check(1)
+        messages = [f["message"] for f in payload["findings"]]
+        self.assertTrue(any("pytest.mark.skip" in message for message in messages), messages)
+        self.assertTrue(any("pytest.xfail" in message for message in messages), messages)
+
+    def test_strengthened_tests_pass_and_unrelated_deletions_ignored(self):
+        self.write_test()
+        (self.root / "docs").mkdir()
+        (self.root / "docs/note.md").write_text("x", encoding="utf-8")
+        self.commit()
+        self.write_test(body="def test_one():\n    assert app() == 1\n"
+                             "def test_two():\n    assert app() == 2\n    assert app() == 3\n")
+        (self.root / "docs/note.md").unlink()
+        self.check(0)
+
+    def test_allow_options_relax_findings(self):
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text() +
+                          '[checks.options]\nallow_deletions = true\nallow_skip_markers = true\n'
+                          'max_removed_assertions = 5\n')
+        self.write_test()
+        self.commit()
+        (self.root / "tests/test_app.py").unlink()
+        self.check(0)
+
+    def test_missing_git_or_bad_base_is_operational_error(self):
+        self.write_test()
+        payload = self.check(2)
+        self.assertIn("core.error", [f["rule"] for f in payload["findings"]])
+        self.commit()
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text() + '[checks.options]\nbase = "nosuchref"\n')
+        payload = self.check(2)
+        self.assertIn("core.error", [f["rule"] for f in payload["findings"]])
+
+    def test_reuse_false_check_is_never_reused(self):
+        self.write_test()
+        self.commit()
+        first = self.check(0)
+        # spec.paths still record as inputs for evidence; the reuse opt-out
+        # keeps a moved baseline from serving a stale pass.
+        self.assertEqual(first["checks"][0]["input_files"], ["tests/test_app.py"])
+        second = self.check(0)
+        self.assertEqual(second["checks"][0]["status"], "passed")
+        payload = self.cli("check", "--reuse", "--format", "json")
+        self.assertEqual(payload.returncode, 0)
+        self.assertEqual(json.loads(payload.stdout)["checks"][0]["status"], "passed")
+
+    def test_subdirectory_root_uses_repo_prefix(self):
+        sub = self.root / "pkg"
+        sub.mkdir()
+        (sub / "exitzero.toml").write_text(
+            'version = 1\nplugins = ["exitzero_verify"]\n'
+            '[[checks]]\nid = "integrity"\nkind = "python.test-integrity"\n'
+            'paths = ["tests/**/*.py"]\n', encoding="utf-8")
+        (sub / "tests").mkdir()
+        (sub / "tests/test_sub.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+        self.commit()
+        (sub / "tests/test_sub.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, str(CLI), "--root", str(sub),
+                                 "check", "--format", "json"],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        messages = [f["message"] for f in json.loads(result.stdout)["findings"]]
+        self.assertTrue(any("reduced from 1 to 0" in message for message in messages), messages)
+
+
 if __name__ == "__main__":
     unittest.main()

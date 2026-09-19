@@ -23,6 +23,10 @@ class CheckSpec:
     kind: str
     paths: tuple[str, ...] = ()
     options: dict[str, Any] = field(default_factory=dict)
+    # reuse=False opts the check out of --reuse result caching; required for
+    # checks whose correctness depends on state outside hashed file inputs
+    # (for example a moving git baseline).
+    reuse: bool = True
 
 
 @dataclass(frozen=True)
