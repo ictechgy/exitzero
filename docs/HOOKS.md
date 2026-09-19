@@ -253,3 +253,20 @@ Verified live 2026-09-19 through the official MCP Inspector client over
 real stdio JSON-RPC: `tools/list` discovers `check_completion`, and the
 tool returns a structured `passed`/`failed` verdict plus receipt path on
 both clean and violating trees.
+
+Two real agent hosts verified the same day, both calling the tool and
+relaying the verdict correctly in headless mode:
+
+- **Grok CLI** — register with
+  `grok mcp add exitzero-gate <path-to>/bin/exitzero --scope project -- plugin mcp-gate`
+  (writes `[mcp_servers.exitzero-gate]` to `.grok/config.toml`). Project-scope
+  servers only load under `grok -p ... --trust`; the agent invoked
+  `exitzero-gate__check_completion` and reported `failed` on a broken tree
+  and `passed` after repair.
+- **OpenCode** — `opencode.json` block
+  `{"mcp": {"exitzero-gate": {"type": "local", "command": ["<path-to>/bin/exitzero", "plugin", "mcp-gate"], "enabled": true}}}`;
+  `opencode mcp list` shows `connected` and `opencode run` invoked
+  `exitzero-gate_check_completion` with both verdicts observed.
+
+Neither host offers a blocking stop hook, so the gate stays advisory there:
+the verdict is real evidence only because the agent chose to call it.
