@@ -93,8 +93,13 @@ def _settings_hook_entry(command: str) -> dict:
 
 
 def _exitzero_managed(adapter: str, command: object) -> bool:
-    """Detect a stale exitzero-owned entry so reinstalls do not stack duplicates."""
-    return isinstance(command, str) and "hooks run" in command and f"--adapter {adapter}" in command
+    """Detect a stale exitzero-owned entry so reinstalls do not stack duplicates.
+
+    Requires the exitzero launcher itself in the command — a foreign entry
+    that merely contains ``hooks run --adapter X`` must survive pruning.
+    """
+    return (isinstance(command, str) and "exitzero" in command
+            and "hooks run" in command and f"--adapter {adapter}" in command)
 
 
 def _merge_settings_hooks(data: dict, command: str, adapter: str) -> dict:
@@ -105,7 +110,8 @@ def _merge_settings_hooks(data: dict, command: str, adapter: str) -> dict:
     if not isinstance(groups, list):
         raise ValueError("Existing 'Stop' hooks must be a list")
     owned = None
-    for group in groups:
+    emptied_by_pruning: set[int] = set()
+    for index, group in enumerate(groups):
         if not isinstance(group, dict):
             raise ValueError("Existing 'Stop' hook groups must be objects")
         entries = group.get("hooks")
@@ -113,13 +119,19 @@ def _merge_settings_hooks(data: dict, command: str, adapter: str) -> dict:
             raise ValueError("Existing 'Stop' hook groups require a 'hooks' list")
         # Drop stale exitzero entries (older root/policy paths) while keeping
         # foreign hooks untouched; only the current command may stay.
+        before = len(entries)
         entries[:] = [entry for entry in entries
                       if not (isinstance(entry, dict) and entry.get("command") != command
                               and _exitzero_managed(adapter, entry.get("command")))]
+        if before and not entries:
+            emptied_by_pruning.add(index)
         for entry in entries:
             if isinstance(entry, dict) and entry.get("command") == command:
                 owned = group
-    groups[:] = [group for group in groups if group["hooks"]]
+    # Only groups emptied by our own pruning are removed — a foreign group
+    # that was already empty is user data, not ours to delete.
+    groups[:] = [group for index, group in enumerate(groups)
+                 if group["hooks"] or index not in emptied_by_pruning]
     if owned is None:
         groups.append(_settings_hook_entry(command))
     return data

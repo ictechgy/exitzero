@@ -34,6 +34,9 @@ class Context:
     root: Path
     policy: dict[str, Any]
     policy_path: Path
+    # Set when the run is narrowed by `check --diff`: scoped-out selections
+    # may legitimately select zero files (e.g. every matched path was deleted).
+    diff: str | None = None
 
 
 CheckHandler = Callable[[Context, CheckSpec], list[Finding]]

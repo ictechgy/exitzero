@@ -1,6 +1,7 @@
 """One runner for CLI, CI and local hook adapters."""
 from dataclasses import asdict
 from datetime import datetime, timezone
+import glob
 from pathlib import Path
 import json
 import time
@@ -188,18 +189,26 @@ def _diff_changed_files(root: Path, ref: str) -> list[str]:
         if any(part in EXCLUDED for part in parts) or is_sensitive(Path(relative)):
             continue
         try:
-            candidate = safe_path(root, relative)
+            safe_path(root, relative)
         except ValueError:
             continue
-        if candidate.is_file():
-            changed.append(relative)
+        # Deleted paths stay: they cannot be selected from the filesystem, but
+        # checks that inspect VCS state (python.test-integrity) need them —
+        # dropping them would silently hide test deletions under --diff.
+        changed.append(relative)
     return sorted(set(changed))
 
 
 def _narrow_specs(checks: list[CheckSpec], changed: list[str]) -> list[CheckSpec]:
-    """Restrict each check's selection to paths present in the diff set."""
+    """Restrict each check's selection to paths present in the diff set.
+
+    Narrowed paths are literal filenames reused as glob patterns, so
+    metacharacters are escaped — a file literally named ``test[1].py`` must
+    still match itself rather than ``test1.py``.
+    """
     return [CheckSpec(spec.id, spec.kind,
-                      tuple(relative for relative in changed if match_path(relative, spec.paths)),
+                      tuple(glob.escape(relative) for relative in changed
+                            if match_path(relative, spec.paths)),
                       spec.options, spec.reuse)
             for spec in checks]
 
@@ -228,7 +237,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         if command == "lint-config" and not registry.linters:
             raise ValueError("No config linter is registered")
         receipt["plugins"] = policy["plugins"]
-        context = Context(root, policy, path)
+        context = Context(root, policy, path, diff)
         if slot == "pre-commit":
             dirty = subprocess.run(["git", "-C", str(root), "diff", "--quiet", "--"],
                                    capture_output=True, timeout=15)

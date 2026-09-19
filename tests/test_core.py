@@ -935,6 +935,24 @@ class AdapterHookTests(unittest.TestCase):
         self.assertIn("foreign --check", commands)
         self.assertNotIn("/old/root exitzero hooks run --adapter claude --event stop", commands)
 
+    def test_reinstall_preserves_foreign_hooklike_entries_and_empty_groups(self):
+        self.init()
+        settings = self.root / ".claude/settings.json"
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        settings.write_text(json.dumps({"hooks": {"Stop": [
+            {"matcher": "", "hooks": [
+                {"type": "command",
+                 "command": "othertool hooks run --adapter claude"}]},
+            {"matcher": "legacy", "hooks": []}]}}), encoding="utf-8")
+        self.install("claude")
+        groups = json.loads(settings.read_text(encoding="utf-8"))["hooks"]["Stop"]
+        commands = [entry["command"] for group in groups for entry in group["hooks"]]
+        # A foreign entry that merely looks hook-shaped is not exitzero's to prune.
+        self.assertIn("othertool hooks run --adapter claude", commands)
+        # A foreign group that was already empty is user data and stays.
+        self.assertTrue(any(group["hooks"] == [] and group.get("matcher") == "legacy"
+                            for group in groups), groups)
+
     def test_install_preserves_unrelated_settings_keys(self):
         self.init()
         settings = self.root / ".claude/settings.json"
@@ -1150,6 +1168,17 @@ class TestIntegrityTests(unittest.TestCase):
         self.assertEqual(payload.returncode, 0)
         self.assertEqual(json.loads(payload.stdout)["checks"][0]["status"], "passed")
 
+    def test_diff_scoped_run_still_flags_deleted_tests(self):
+        # Deleted paths must survive --diff narrowing: dropping them would let
+        # a PR delete its tests and pass the scoped integrity check.
+        self.write_test()
+        self.commit()
+        (self.root / "tests/test_app.py").unlink()
+        result = self.cli("check", "--diff", "HEAD", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        messages = [f["message"] for f in json.loads(result.stdout)["findings"]]
+        self.assertTrue(any("deleted" in message for message in messages), messages)
+
     def test_subdirectory_root_uses_repo_prefix(self):
         sub = self.root / "pkg"
         sub.mkdir()
@@ -1224,6 +1253,20 @@ class DiffScopeTests(unittest.TestCase):
         result = self.cli("check", "--diff", "nosuchref", "--format", "json")
         self.assertEqual(result.returncode, 2)
         self.assertIn("core.error", [f["rule"] for f in json.loads(result.stdout)["findings"]])
+
+    def test_diff_narrows_literal_paths_with_glob_metacharacters(self):
+        self.init_and_commit()
+        # A committed file literally named test[1].py must be checked when it
+        # changes — an unescaped pattern would match test1.py instead.
+        (self.root / "weird[1].py").write_text("def ok(): return 1\n", encoding="utf-8")
+        self.commit()
+        (self.root / "weird[1].py").write_text("def broken(:\n", encoding="utf-8")
+        result = self.cli("check", "--diff", "HEAD", "--format", "json")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        syntax = next(check for check in payload["checks"] if check["id"] == "syntax")
+        self.assertEqual(syntax["status"], "failed")
+        self.assertEqual(syntax["input_files"], ["weird[1].py"])
 
     def test_reuse_field_must_be_boolean(self):
         self.init_and_commit()

@@ -19,7 +19,9 @@ def register(registry):
     registry.add_check("example.check", check)
 ```
 
-`Context` contains `root`, parsed `policy`, and `policy_path`. `CheckSpec` contains
+`Context` contains `root`, parsed `policy`, `policy_path`, and `diff` (the
+`check --diff` ref or `None`; when set, a narrowed selection may legitimately
+select zero files). `CheckSpec` contains
 `id`, `kind`, `paths`, an `options` table and `reuse` (the policy's per-check
 `reuse` boolean, default `true`; `false` excludes the check from `--reuse`
 result caching). Check and lint handlers return a list
