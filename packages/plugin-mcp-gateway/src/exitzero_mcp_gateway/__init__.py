@@ -5,8 +5,9 @@ as a subprocess and proxies newline-delimited JSON-RPC between the client on
 its own stdio and the server.  ``tools/call`` requests are authorized against
 allow/deny glob patterns — deny-by-default, deny wins — and ``tools/list``
 responses drop tools the client may not call.  Every decision is appended to
-an audit log under ``.exitzero/mcp-gateway/``.  The gateway never inspects
-tool arguments beyond the name and never touches the network.
+an audit log under ``.exitzero/mcp-gateway/``. Optional rules constrain literal
+path, HTTPS origin and enum arguments for known tool schemas. No network access
+or argument values in the audit log are needed for these checks.
 """
 
 from __future__ import annotations
@@ -26,13 +27,14 @@ import uuid
 
 from exitzero.api import Context
 from exitzero.services import safe_path
+from .arguments import allowed_arguments, load_rules
 
 
 API_VERSION = 1
 
 
 _GW_SCHEMA_VERSION = 1
-_GW_FIELDS = frozenset({"schema_version", "description", "upstream", "allow", "deny"})
+_GW_FIELDS = frozenset({"schema_version", "description", "upstream", "allow", "deny", "argument_rules"})
 _GW_UPSTREAM_FIELDS = frozenset({"command", "args", "cwd", "env"})
 _GW_PATTERN_FIELDS = frozenset({"tools"})
 _GW_SHUTDOWN_TIMEOUT = 5.0
@@ -121,7 +123,7 @@ def _load_gateway_config(context: Context, path: Path) -> dict[str, Any]:
         raw = path.read_bytes()
         document = tomllib.loads(raw.decode("utf-8"))
     except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
-        raise ValueError(f"gateway config cannot be parsed: {error}") from error
+        raise ValueError("gateway config cannot be parsed") from error
     if not isinstance(document, dict) or set(document) - _GW_FIELDS:
         raise ValueError("gateway config has unknown fields")
     version = document.get("schema_version")
@@ -164,6 +166,7 @@ def _load_gateway_config(context: Context, path: Path) -> dict[str, Any]:
         "env": {**os.environ, **env},
         "allow": allow,
         "deny": deny,
+        "argument_rules": load_rules(document.get("argument_rules", []), cwd),
         "config_sha256": hashlib.sha256(raw).hexdigest(),
     }
 
@@ -480,6 +483,15 @@ def _handle_client_line(line: str, upstream: subprocess.Popen, config: dict[str,
                 _write_client_obj(_error_response(request_id, -32000,
                                                   f"exitzero: tool {name!r} is not allowed "
                                                   "by the gateway policy"), write_lock)
+            return
+        if not allowed_arguments(config, name, params.get("arguments", {})):
+            if is_request:
+                with lock:
+                    pending.pop(request_id, None)
+            audit.write("tool_call", tool=name, decision="deny", reason="argument-policy", request_id=request_id)
+            if is_request:
+                _write_client_obj(_error_response(request_id, -32000,
+                                                  "exitzero: tool arguments denied by gateway policy"), write_lock)
             return
         audit.write("tool_call", tool=name, decision="allow", request_id=request_id)
     _write_upstream(upstream, line)
