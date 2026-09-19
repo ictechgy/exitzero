@@ -8,7 +8,7 @@
     "tool_version": {"type": "string"},
     "run_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
     "started_at": {"type": "string", "format": "date-time"},
-    "command": {"enum": ["check", "lint-config"]},
+    "command": {"enum": ["check", "lint-config", "doctor"]},
     "hook_slot": {"enum": [null, "PreToolUse", "PostToolUse", "pre-commit", "CI"]},
     "diff": {"type": "string", "description": "Git ref or range the check selection was narrowed against (--diff). Absent on unscoped runs."},
     "policy_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
@@ -27,6 +27,14 @@
     "requirements": {"type": "array", "items": {"type": "object", "required": ["id", "checks", "status"], "properties": {
       "id": {"type": "string"}, "checks": {"type": "array", "items": {"type": "string"}}, "status": {"enum": ["checks_passed", "failed", "unverified"]}
     }, "additionalProperties": false}},
+    "diagnostics": {"type": "array", "description": "Project setup observations from doctor, not evidence of runtime enforcement.", "items": {
+      "type": "object", "required": ["target", "state", "runtime", "path", "detail", "next_step"], "properties": {
+        "target": {"enum": ["cursor", "claude", "codex", "gemini", "agy", "pre-commit", "CI"]},
+        "state": {"enum": ["configured", "missing", "unmanaged", "misconfigured", "unknown"]},
+        "runtime": {"const": "unverified"},
+        "path": {"type": ["string", "null"]}, "detail": {"type": "string"}, "next_step": {"type": "string"}
+      }, "additionalProperties": false
+    }},
     "findings": {"type": "array", "items": {"type": "object", "required": ["rule", "message", "path", "line", "severity"], "properties": {
       "rule": {"type": "string"}, "message": {"type": "string"}, "path": {"type": ["string", "null"]}, "line": {"type": ["integer", "null"], "minimum": 1}, "severity": {"enum": ["error", "warning"]}
     }, "additionalProperties": false}},
@@ -35,5 +43,7 @@
     "duration_ms": {"type": "number", "minimum": 0},
     "receipt": {"type": ["string", "null"]}
   },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "allOf": [{"if": {"properties": {"command": {"const": "doctor"}}, "required": ["command"]},
+             "then": {"required": ["diagnostics"]}}]
 }

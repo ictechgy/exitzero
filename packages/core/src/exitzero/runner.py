@@ -10,6 +10,7 @@ import subprocess
 
 from . import __version__
 from .api import CheckSpec, Context, Finding, Registry
+from .doctor import diagnose, input_paths as doctor_inputs
 from .files import EXCLUDED, is_sensitive, match_path, safe_path, select_files, sha256_file
 from .ledger import persist
 from .hooks import installed_inputs
@@ -43,7 +44,7 @@ def _spec_patterns(context: Context, registry: Registry, spec: CheckSpec) -> lis
 
 
 def _snapshot(context: Context, registry: Registry, collect: dict | None = None,
-              check_specs: list[CheckSpec] | None = None) -> dict[str, str]:
+              check_specs: list[CheckSpec] | None = None, *, doctor: bool = False) -> dict[str, str]:
     root, policy = context.root, context.policy
     files = {context.policy_path}
     patterns = []
@@ -58,6 +59,8 @@ def _snapshot(context: Context, registry: Registry, collect: dict | None = None,
     # shape must surface as that plugin's lint finding, not a core TypeError.
     extra = policy.get("harness", {}).get("config_files", [])
     names = ["AGENTS.md", ".cursor/hooks.json", *installed_inputs(root)]
+    if doctor:
+        names.extend(doctor_inputs(root))
     if isinstance(extra, list):
         names.extend(name for name in extra if isinstance(name, str))
     for name in names:
@@ -150,7 +153,7 @@ def _requirement_findings(receipt: dict, outcomes: dict[str, str], valid: bool) 
     for requirement in receipt.get("requirements", []):
         statuses = [outcomes.get(check) for check in requirement["checks"]]
         status = "unverified"
-        if receipt["command"] != "lint-config":
+        if receipt["command"] not in {"lint-config", "doctor"}:
             if "failed" in statuses:
                 status = "failed"
                 findings.append(Finding("core.requirement-failed",
@@ -214,7 +217,8 @@ def _narrow_specs(checks: list[CheckSpec], changed: list[str]) -> list[CheckSpec
 
 
 def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
-        input_error: bool = False, reuse: bool = False, diff: str | None = None) -> dict:
+        input_error: bool = False, reuse: bool = False, diff: str | None = None,
+        doctor_adapter: str | None = None) -> dict:
     started = time.monotonic()
     receipt = {"schema_version": 1, "tool_version": __version__, "run_id": uuid.uuid4().hex,
                "started_at": datetime.now(timezone.utc).isoformat(), "command": command,
@@ -224,6 +228,8 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
     operational_error = False
     inputs_changed = False
     verification_outcomes: dict[str, str] = {}
+    if command == "doctor":
+        receipt["diagnostics"] = []
     try:
         path = safe_path(root, policy_name)
         if not path.is_file():
@@ -234,7 +240,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
             receipt["requirements"] = [{"id": requirement["id"], "checks": list(requirement["checks"]),
                                         "status": "unverified"} for requirement in policy["requirements"]]
         registry = discover(policy["plugins"])
-        if command == "lint-config" and not registry.linters:
+        if command in {"lint-config", "doctor"} and not registry.linters:
             raise ValueError("No config linter is registered")
         receipt["plugins"] = policy["plugins"]
         context = Context(root, policy, path, diff)
@@ -256,12 +262,15 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
             checks = _narrow_specs(checks, _diff_changed_files(root, diff))
             receipt["diff"] = diff
         check_inputs: dict[str, list[str]] = {}
-        receipt["inputs"] = _snapshot(context, registry, check_inputs, checks)
+        receipt["inputs"] = _snapshot(context, registry, check_inputs, checks, doctor=command == "doctor")
         for name, linter in registry.linters.items():
             result = _findings(linter(context))
             findings.extend(result)
             receipt["checks"].append({"id": name, "kind": "config-lint", "status": "failed" if result else "passed", "finding_count": len(result)})
-        if command != "lint-config":
+        if command == "doctor":
+            receipt["diagnostics"], result = diagnose(context, doctor_adapter)
+            findings.extend(result)
+        if command not in {"lint-config", "doctor"}:
             reusable = (_reusable_checks(root, check_inputs, receipt["inputs"],
                                          receipt["policy_sha256"], checks)
                         if reuse and slot is None else {})
@@ -292,7 +301,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
             if slot is not None:
                 for handler in registry.hooks.get(slot, []):
                     findings.extend(_findings(handler(context, slot)))
-        if _snapshot(context, registry, check_specs=checks) != receipt["inputs"]:
+        if _snapshot(context, registry, check_specs=checks, doctor=command == "doctor") != receipt["inputs"]:
             inputs_changed = True
             findings.append(Finding("core.inputs-changed", "Inspected files changed during the run; rerun against stable inputs."))
     except (Exception, SystemExit, KeyboardInterrupt) as error:
@@ -303,6 +312,10 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         operational_error = True
         findings.append(Finding("core.hook-input", "Invalid hook input; expected a JSON object and a nonnegative integer loop_count."))
     findings.extend(_requirement_findings(receipt, verification_outcomes, not operational_error and not inputs_changed))
+    if command == "doctor" and (operational_error or inputs_changed):
+        for diagnostic in receipt["diagnostics"]:
+            diagnostic.update(state="unknown", detail="Diagnosis was incomplete or inputs changed during inspection.",
+                              next_step="Resolve the reported error and rerun doctor against stable inputs.")
     receipt["exit_code"] = 2 if operational_error else int(any(f.severity == "error" for f in findings))
     receipt["status"] = {0: "passed", 1: "failed", 2: "error"}[receipt["exit_code"]]
     receipt["findings"] = [asdict(f) for f in findings]

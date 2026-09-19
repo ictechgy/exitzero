@@ -11,6 +11,9 @@ exitzero는 저장소의 정책을 실행하는 작은 개발 도구입니다. �
 Python 코드와 에이전트 설정을 검사합니다. 명시적인 command 검사로는 어떤
 언어든 기존 도구를 그대로 실행할 수 있습니다.
 
+**Cursor stop은 수정 요청을 보내는 훅입니다. 머지 보호는 필수 CI로 설정하세요.**
+아래 실패 데모를 실행한 뒤 [필수 CI 설정](docs/HOOKS.md#required-ci-setup)을 연결하세요.
+
 ## 설치
 
 Python 3.11 이상이 필요합니다. 런타임과 테스트는 표준 라이브러리만
@@ -20,7 +23,45 @@ Python 3.11 이상이 필요합니다. 런타임과 테스트는 표준 라이�
 pip install exitzero
 ```
 
-이후 아무 저장소 안에서:
+이 도구는 Python 패키지입니다. npm의 동명 `exitzero`는 종료 코드를 강제로
+0으로 만드는 별도 도구이며 실행 파일 이름도 같습니다. 함께 설치했다면 Python
+가상환경으로 실행 경로를 구분하세요.
+
+## 30초 실패 데모
+
+설치 후 기존 프로젝트와 분리된 **새 디렉터리**에서 실행하세요. 추가 테스트
+프레임워크 설치 없이, 정책에 실제 테스트 명령을 등록합니다.
+
+```sh
+mkdir exitzero-demo
+cd exitzero-demo
+mkdir tests
+cat > tests/test_double.py <<'PY'
+from unittest import TestCase
+
+def double(value):
+    return value + 1
+
+class DoubleTests(TestCase):
+    def test_double(self):
+        self.assertEqual(double(3), 6)
+PY
+exitzero init --profile python \
+  --test-command '{python} -B -m unittest discover -s tests'
+exitzero check --format json  # 예상 종료 코드 1: test-command 실패
+exitzero report --format json # 저장된 실패 결과와 영수증 경로
+python3 - <<'PY'
+from pathlib import Path
+path = Path('tests/test_double.py')
+path.write_text(path.read_text().replace('value + 1', 'value * 2'))
+PY
+exitzero check --format json  # 종료 코드 0: 수정 후 새 영수증 저장
+```
+
+실패와 성공 모두 `.exitzero/runs/`에 남습니다. 기본 `init`은 구문만 검사하므로,
+이 동작 버그를 잡는 것은 위에서 지정한 `--test-command`입니다.
+
+기존 저장소에 정책이 없다면 그 저장소에서 다음 명령으로 시작하세요:
 
 ```sh
 exitzero init
@@ -156,6 +197,8 @@ exitzero init
 exitzero init --sync
 exitzero check --format json
 exitzero lint-config --format json
+exitzero doctor --format json
+exitzero doctor --adapter cursor
 exitzero hooks install --adapter cursor
 exitzero hooks install --adapter pre-commit
 exitzero hooks run --slot CI --format json
@@ -207,6 +250,19 @@ exitzero plugin ledger-publish                                 # 실행 기록 �
 로컬 증거입니다.
 
 ## 로컬 훅과 CI
+
+`doctor`는 현재 소스 체크아웃 기능이며 PyPI 0.3.0에는 포함되지 않았습니다.
+다음 릴리스 전에는 소스 런처로 실행하세요.
+`exitzero doctor`는 검증 명령을 실행하지 않고 AGENTS와 프로젝트 훅 설정을
+진단합니다. 각 어댑터에 `configured`, `missing`, `unmanaged`, `misconfigured`,
+`unknown` 상태와 다음 조치를 표시하며, 재설치 후에도 꺼진 Cursor `failClosed`를
+찾습니다. `--adapter NAME`으로 지정한 어댑터가 준비되지 않았으면 오류입니다.
+지정하지 않은 어댑터의 미설치는 CI만 쓰는 프로젝트를 실패시키지 않습니다.
+
+JSON 영수증을 저장하며 종료 코드는 설정 오류 없음 0, 위반 1, 진단·저장 오류
+2입니다. 런타임은 항상 `unverified`입니다. 클라이언트 세션, 사용자·관리자
+설정, 원격 브랜치 보호를 검사하지 않으므로 설치 상태가 실제 훅 실행의 증거는
+아닙니다. [필수 CI 설정](docs/HOOKS.md#required-ci-setup)으로 머지 경로를 연결하세요.
 
 [훅 설정](docs/HOOKS.md)을 참고하세요. Cursor는 기본으로 `stop` 훅을
 사용합니다 — 실패 시 후속 수정 턴을 한 번 요청합니다. 이것은 피드백이지

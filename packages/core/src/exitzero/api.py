@@ -72,7 +72,7 @@ class Registry:
         self.hooks.setdefault(slot, []).append(handler)
 
     def add_command(self, name: str, handler: Callable[[Context, list[str]], int]) -> None:
-        if name in {"init", "check", "lint-config", "hooks", "report", "plugin"}:
+        if name in {"init", "check", "lint-config", "doctor", "hooks", "report", "plugin"}:
             raise ValueError("Reserved CLI command")
         self._add(self.commands, name, handler)
 

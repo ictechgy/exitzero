@@ -58,6 +58,15 @@ registered configuration linters before verification checks. `lint-config` runs
 linters without executing check commands. Hook slots use the same policy and
 runner; extra plugin handlers run after its checks.
 
+`doctor` also runs the configured linters without verification checks or hook
+handlers. Core adds project hook setup diagnostics and persists them in the
+optional receipt `diagnostics` array, with `command: "doctor"`. Each observation
+has `target`, `state`, `runtime`, `path`, `detail`, and `next_step`; runtime is
+always `unverified`. Doctor does not infer execution from prior receipts and
+leaves requirement mappings unverified without failing for missing execution.
+Its extra project hook inputs are included in both stability snapshots.
+There is no new plugin registration method; `doctor` is a reserved core command.
+
 Shared helpers: plugins may import `exitzero.api` and `exitzero.services`;
 every other core module is internal and outside the `API_VERSION` contract.
 `exitzero.services.select_files(root, patterns)` returns sorted, deduplicated

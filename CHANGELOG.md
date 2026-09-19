@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- `doctor [--adapter NAME] [--format json]` diagnoses project policy/AGENTS
+  drift and installed client/Git hook setup without running verification
+  commands. It catches disabled Cursor `failClosed` after reinstall, invalid
+  repair limits/timeouts and managed-only project hooks; receipts distinguish
+  configuration observations from unverified runtime enforcement.
+- English/Korean failure demos configure a real test command and retain failing
+  and repaired receipts. Required-CI guidance covers artifacts, branch rules,
+  trusted test-integrity baselines and the limit of local stop hooks.
+
 ## 0.3.0 — released 2026-09-19
 
 **Multi-adapter hooks and completion coverage**

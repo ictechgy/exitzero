@@ -386,6 +386,11 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
             lint = _json_cli(release, cli, repo, env, ["lint-config"], "lint-config-installed", 0)
             release.archive_receipts("lint", repo)
             _report(release, cli, repo, env, lint, "report-after-lint")
+            doctor = _json_cli(release, cli, repo, env, ["doctor"], "doctor-installed", 0)
+            release.archive_receipts("doctor", repo)
+            if (doctor.get("command") != "doctor" or not doctor.get("diagnostics")
+                    or any(item.get("runtime") != "unverified" for item in doctor["diagnostics"])):
+                raise ReleaseFailure("installed doctor did not preserve setup/runtime distinction")
             _git(release, repo, env, ["init", "-q"], "git-init")
             _git(release, repo, env, ["add", "."], "git-add-baseline")
             _commit(release, repo, env, "baseline", "git-commit-baseline", 0)
@@ -426,6 +431,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
                 {"name": "installed-cli-init", "status": "passed"},
                 {"name": "installed-check-receipt-equality", "status": "passed", "exit_code": check["exit_code"]},
                 {"name": "installed-lint-config-receipt-equality", "status": "passed", "exit_code": lint["exit_code"]},
+                {"name": "installed-doctor-receipt-equality", "status": "passed", "exit_code": doctor["exit_code"]},
                 {"name": "plugin-entry-points-verify-harness", "status": "passed"},
                 {"name": "git-hook-valid-commit", "status": "passed", "exit_code": accepted.returncode,
                  "hook_slot": valid_receipt["hook_slot"]},

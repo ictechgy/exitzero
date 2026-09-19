@@ -13,7 +13,7 @@ cd /path/to/exitzero
 `release_check.py` creates a fresh temporary virtual environment, runs its
 embedded `ensurepip`, installs only the selected wheel with `--no-index
 --no-deps`, and invokes the installed `exitzero` command. It checks `init`,
-`check`, `lint-config`, `report`, both `verify` and `harness` plugin entry-point
+`check`, `lint-config`, `doctor`, `report`, both `verify` and `harness` plugin entry-point
 aliases, and equality between JSON output and saved receipts.
 
 The runner also creates an isolated temporary Git repository and installs the

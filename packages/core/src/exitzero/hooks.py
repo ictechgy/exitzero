@@ -69,6 +69,12 @@ def expected_adapter_command(root: Path, policy_path: Path, adapter: str, slot: 
                        "hooks", "run", "--adapter", adapter, "--event", event])
 
 
+def expected_git_hook(root: Path, policy_path: Path) -> str:
+    command = shlex.join([*_launcher(), "--root", str(root), "--policy", policy_path.relative_to(root).as_posix(),
+                          "hooks", "run", "--slot", "pre-commit"])
+    return "#!/bin/sh\n# exitzero managed hook\nexec " + command + "\n"
+
+
 def _manifest(root: Path) -> dict:
     path = safe_path(root, ".exitzero/hooks.json")
     # A non-regular manifest (FIFO, directory) is an operational error, not an
@@ -253,9 +259,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         except ValueError:
             raise ValueError("External Git hook directories require manual CLI installation") from None
         path = safe_path(root, relative)
-        command = shlex.join([*_launcher(), "--root", str(root), "--policy", policy_path.relative_to(root).as_posix(),
-                              "hooks", "run", "--slot", "pre-commit"])
-        content = "#!/bin/sh\n# exitzero managed hook\nexec " + command + "\n"
+        content = expected_git_hook(root, policy_path)
         if path.is_file() and path.read_text(encoding="utf-8") != content:
             raise ValueError("Existing pre-commit hook preserved; chain the CLI manually")
     write_atomic(path, content)

@@ -10,6 +10,7 @@ from urllib.parse import quote
 
 from . import __version__
 from .api import Context, HOOK_SLOTS
+from .doctor import ADAPTERS
 from .files import safe_path, select_files, validate_relative, write_atomic
 from .hooks import ADAPTER_EVENTS, HOOK_MANAGED_NOTE, cursor_response, install, stop_block_response
 from .loader import discover
@@ -43,6 +44,10 @@ def parser() -> argparse.ArgumentParser:
                                help="Reuse passing check results when a check's selected inputs are unchanged since a prior receipt")
             child.add_argument("--diff", metavar="REF",
                                help="Limit checks to files changed relative to a git ref or range such as origin/main...HEAD")
+    doctor = commands.add_parser("doctor", help="Diagnose project policy and hook setup without running checks")
+    doctor.add_argument("--format", choices=("human", "json"), default="human")
+    doctor.add_argument("--adapter", choices=ADAPTERS,
+                        help="Require this adapter to be configured; other adapters remain optional")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
     installer = hooks.add_parser("install")
     installer.add_argument("--adapter", choices=("cursor", "claude", "codex", "gemini", "agy", "pre-commit"), default="cursor")
@@ -134,6 +139,12 @@ def emit(receipt: dict, output: str) -> None:
         print(json.dumps(receipt, ensure_ascii=False, sort_keys=True))
         return
     print(f"exitzero: {receipt['status']} (exit {receipt['exit_code']})")
+    if receipt.get("command") == "doctor":
+        print("Setup diagnosis only: verification checks were not run; runtime enforcement is unverified.")
+        for item in receipt.get("diagnostics", []):
+            print(f"  {_scrub(item['target'])}: {_scrub(item['state'])} (runtime: {_scrub(item['runtime'])})")
+            print(f"    {_scrub(item['detail'])}")
+            print(f"    Next: {_scrub(item['next_step'])}")
     reused = [_scrub(check["id"]) for check in receipt.get("checks", []) if check.get("status") == "reused"]
     if reused:
         print(f"  Reused passing evidence (inputs unchanged): {', '.join(reused)}")
@@ -220,10 +231,11 @@ def _init_generation(args: argparse.Namespace) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     root = Path(args.root).resolve()
-    if args.command in {"check", "lint-config"}:
+    if args.command in {"check", "lint-config", "doctor"}:
         receipt = run(root, args.policy, args.command,
                       reuse=args.command == "check" and args.reuse,
-                      diff=args.diff if args.command == "check" else None)
+                      diff=args.diff if args.command == "check" else None,
+                      doctor_adapter=args.adapter if args.command == "doctor" else None)
         emit(receipt, args.format)
         return receipt["exit_code"]
     if args.command == "hooks" and args.hook_command == "run":

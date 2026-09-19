@@ -3,6 +3,47 @@
 All adapters run the same policy and save a receipt. Install the CLI or keep the
 source checkout in place, then run commands from the repository to be checked.
 
+## Diagnose setup
+
+Doctor is available from the source checkout; PyPI 0.3.0 predates this command.
+
+```sh
+exitzero doctor
+exitzero doctor --adapter cursor --format json
+```
+
+Doctor reuses the configured linters (including AGENTS and installed-hook drift)
+and inspects the five supported project hook documents plus the active
+repository-local Git pre-commit path. It does not execute test commands or hooks,
+read home-directory/managed settings, call a model, or contact the hosting service.
+Selected plugins and their linters remain trusted Python code.
+
+Each adapter reports a setup state and a next step:
+
+| State | Meaning |
+| --- | --- |
+| `configured` | A recorded installation matches this checkout, interpreter and policy |
+| `missing` | No installation is recorded at the expected project hook path |
+| `unmanaged` | A config exists but exitzero has no installation record |
+| `misconfigured` | Drift, a missing current command, or an invalid gate setting was found |
+| `unknown` | Diagnosis is incomplete or the relevant state is outside the project |
+
+Runtime is always `unverified`. Configuration cannot establish client trust,
+whether an interactive/headless hook actually fires, or remote branch protection.
+Run a controlled fail/repair session in the intended client to establish that
+separate evidence. A prior local receipt alone does not prove a client invoked it.
+
+Doctor exits 0 for no diagnosed setup errors, 1 for violations, and 2 for an
+operational or receipt error, saving `.exitzero/runs/*.json` in all possible cases.
+Missing optional adapters do not fail a CI-only project; `--adapter NAME` makes
+that adapter required. `configured` and exit 0 do not certify merge protection.
+Requirement mappings remain `unverified` because doctor does not execute checks.
+
+For example, a Cursor entry with `failClosed: false` is a diagnosis error even
+after reinstalling it. Installation preserves explicit values; set `failClosed`
+to `true`, review `loop_limit: 1` and a positive `timeout`, then reinstall to
+record the intended configuration. Doctor never repairs settings automatically.
+
 ## Cursor
 
 ```sh
@@ -218,13 +259,83 @@ receipts are unsigned local evidence. A typical PR job:
   if: success()                              # optional: scoped per-file evidence
 - uses: actions/upload-artifact@v4
   if: always()
-  with: { name: exitzero-receipts, path: .exitzero/runs/ }
+  with:
+    name: exitzero-receipts
+    path: .exitzero/runs/
+    include-hidden-files: true
+    if-no-files-found: error
 ```
+
+### Required CI setup
+
+Use the same policy locally and in CI. Start with a full `exitzero check`; it
+already runs configuration linters. The following is a GitHub Actions job for a
+repository whose policy and test dependencies are ready. Save it as
+`.github/workflows/exitzero.yml`, adding your project's dependency setup before
+the gate step:
+
+```yaml
+name: exitzero
+on: [pull_request, merge_group]
+permissions:
+  contents: read
+jobs:
+  gate:
+    name: exitzero-required
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - run: python -m pip install exitzero==0.3.0
+      # Install your project's test dependencies here, when needed.
+      - name: Run the full gate on the proposed merge checkout
+        run: exitzero check --format json
+      - name: Keep evidence on success and failure
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: exitzero-${{ github.sha }}-${{ github.run_attempt }}
+          path: .exitzero/runs/
+          include-hidden-files: true
+          if-no-files-found: error
+```
+
+This pins the published gate version; doctor is a source-checkout feature until
+the next release. Test the policy against the version pinned in your own CI.
+For a Node or other project, install its existing tools before the gate too.
+Do not add `continue-on-error` or an `|| true` wrapper to the gate step.
+
+Then configure a ruleset or branch protection on the target branch to require
+the `exitzero-required` check. Confirm the check source, allowed bypass actors,
+and merge-queue events for your repository. Protect the workflow, policy and
+acceptance tests through the team's review rules: a required job that a proposed
+change can silently weaken does not establish the intended checks. Setup commands
+do not change these remote settings. Validate the setup with a deliberately
+failing test on a PR: the job must fail, its receipt artifact must exist, and
+the intended merge path must reject it. Repeat after repair to establish success.
+
+Do not accept agent-supplied receipts or an untrusted restored `.exitzero/` cache
+as the gate result. Run fresh checks in the trusted job. Optional signing should
+bind the receipt digest to the tested commit, policy and CI identity; merely
+uploading or signing a local receipt does not make the check required.
+
+If using `python.test-integrity`, set its `options.base` to an available trusted
+base commit/ref for the intended comparison, and set `reuse = false`. Its default
+`HEAD` compares against the already checked-out commit, so it cannot detect test
+weakening committed in that same checkout. `check --diff REF` limits file selection
+and does **not** change this independent baseline. Make the base available in CI;
+do not substitute a three-dot range where the check expects a single commit/ref.
 
 `check --diff REF` restricts each check's file selection — and the recorded
 `input_files` — to paths changed against a git ref or range (anything
 `git diff` resolves, e.g. `origin/main...HEAD` for merge-base PR scope).
-Deleted, excluded and credential-like paths drop out; a check whose scope has
+Deleted paths remain available to checks such as test-integrity; excluded and
+credential-like paths drop out. A check whose scope has
 no changed files records a vacuous pass with an empty `input_files`, and the
 receipt's `diff` field records the range. An unresolvable ref or missing git
 is an operational error (exit 2). `--diff` narrows verification scope — it is

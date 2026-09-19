@@ -11,6 +11,9 @@ JSON receipt. You use one command; inside, a small core and plugins do the
 work. This MVP checks Python code and agent configuration. Explicit command
 checks can run your existing tools for any language.
 
+**Cursor stop requests a repair turn. Merge protection comes from required CI.**
+Start with the failure demo below, then follow [required CI setup](docs/HOOKS.md#required-ci-setup).
+
 ## Install
 
 Python 3.11 or newer is required. Runtime and tests use only the standard
@@ -20,7 +23,45 @@ library.
 pip install exitzero
 ```
 
-Then, inside any repository:
+This is the Python package. The unrelated npm package named `exitzero` forces
+commands to exit zero; it also installs an `exitzero` executable. Use a Python
+virtual environment if both are installed.
+
+## 30-second failure demo
+
+After installation, run this in a **new directory**, separate from your project.
+It needs no test framework download. The policy explicitly runs the test suite:
+
+```sh
+mkdir exitzero-demo
+cd exitzero-demo
+mkdir tests
+cat > tests/test_double.py <<'PY'
+from unittest import TestCase
+
+def double(value):
+    return value + 1
+
+class DoubleTests(TestCase):
+    def test_double(self):
+        self.assertEqual(double(3), 6)
+PY
+exitzero init --profile python \
+  --test-command '{python} -B -m unittest discover -s tests'
+exitzero check --format json  # expected exit 1; test-command fails
+exitzero report --format json # the saved failure, including its receipt path
+python3 - <<'PY'
+from pathlib import Path
+path = Path('tests/test_double.py')
+path.write_text(path.read_text().replace('value + 1', 'value * 2'))
+PY
+exitzero check --format json  # exit 0; a new receipt records the repair
+```
+
+Both outcomes persist under `.exitzero/runs/`. A basic `init` checks syntax only;
+the `--test-command` above is what catches this behavior bug.
+
+For an existing repository without a policy, start there instead:
 
 ```sh
 exitzero init
@@ -171,6 +212,8 @@ exitzero check --format json
 exitzero check --reuse --format json
 exitzero check --diff origin/main...HEAD --format json
 exitzero lint-config --format json
+exitzero doctor --format json
+exitzero doctor --adapter cursor  # require this local adapter to be configured
 exitzero hooks install --adapter cursor
 exitzero hooks install --adapter claude
 exitzero hooks install --adapter codex
@@ -263,7 +306,21 @@ attestations.
 
 ## Local hooks and CI
 
-See [hook setup](docs/HOOKS.md). Cursor uses a `stop` hook by default:
+`doctor` is available in this source checkout and is not included in PyPI 0.3.0;
+use the source launcher until the next release.
+Run `exitzero doctor` to diagnose AGENTS drift and project hook setup without
+executing verification commands. It reports `configured`, `missing`, `unmanaged`,
+`misconfigured` or `unknown`, with a next step for each adapter. It catches a
+disabled Cursor `failClosed` even after reinstalling the hook. Use
+`--adapter NAME` to make an unconfigured adapter an error; optional missing
+adapters do not fail a CI-only project. Doctor saves the normal JSON receipt:
+0 means no diagnosed setup errors, 1 means a setup violation, and 2 means the
+diagnosis or receipt could not be completed. Every runtime state remains
+`unverified`: no client session, user/managed settings or remote branch rules
+are inspected. A configured hook is not proof that it fires.
+
+See [hook setup](docs/HOOKS.md) and [required CI setup](docs/HOOKS.md#required-ci-setup).
+Cursor uses a `stop` hook by default:
 failures request one follow-up repair turn. This is feedback, not a merge
 barrier. Git pre-commit and CI enforce exit codes. The generic hook command
 has the same 0/1/2 contract as `check`; Cursor translates results to its JSON
