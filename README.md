@@ -142,6 +142,7 @@ ordering in executable tests. See [the sample](examples/sample).
 | `python.syntax` | Python that cannot be parsed |
 | `python.imports` | Unresolved modules and missing statically declared local module symbols |
 | `python.test-quality` | No test cases, empty tests, obvious constant-only assertions |
+| `python.test-integrity` | Test files deleted since a git base ref, removed test cases, new skip/xfail markers, net assertion loss |
 | `command` | A configured test/lint command fails or exceeds its timeout |
 | Harness lint | Generated AGENTS drift, installed-hook drift, JSON/TOML config shape errors (Cursor and Claude hook documents, MCP server tables), repeated/conflicting rule IDs |
 
@@ -152,6 +153,15 @@ module names. Test-quality analysis detects obvious problems; run real tests
 as well. Natural language contradictions in arbitrary AGENTS prose or Cursor
 rule files are not understood by v1.
 
+`python.test-integrity` compares worktree test files against a git baseline
+(`base` option, default `HEAD`; two-dot `git diff <base>` semantics covering
+staged and unstaged edits). It needs a git worktree and a resolvable base
+commit; a missing repo or ref is an operational error. Options
+`allow_deletions`, `allow_skip_markers` and `max_removed_assertions` relax
+individual categories. Set `reuse = false` on this check — the baseline lives
+outside hashed file inputs, so unchanged worktree files could otherwise reuse
+a stale pass after the base ref moves.
+
 ## Commands and outcomes
 
 ```sh
@@ -159,13 +169,18 @@ exitzero init
 exitzero init --sync
 exitzero check --format json
 exitzero check --reuse --format json
+exitzero check --diff origin/main...HEAD --format json
 exitzero lint-config --format json
 exitzero hooks install --adapter cursor
+exitzero hooks install --adapter claude
+exitzero hooks install --adapter codex
 exitzero hooks install --adapter pre-commit
 exitzero hooks run --slot CI --format json
 exitzero report --format json
+exitzero report --format intoto   # unsigned in-toto Statement wrapping the latest receipt
 exitzero plugin harness-eval --scenario examples/eval-repair   # opt-in bounded eval
 exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP proxy
+exitzero plugin mcp-gate                                       # stdio completion-gate MCP server
 exitzero plugin ledger-publish                                 # aggregate run record
 ```
 
@@ -174,14 +189,21 @@ configuration linters and verification checks. `lint-config` never executes
 verification commands. `plugin harness-eval` replays a scripted multi-turn
 scenario against the gate inside a temporary copy; each turn's expectations
 are scored, skipped scenarios are reported separately, and the report lands
-under `.exitzero/evals/`. See [the eval example](examples/eval-repair).
+under `.exitzero/evals/`. From the second turn onward each turn records
+`transitions` — SWE-bench-style `fail_to_pass`, `pass_to_pass` and the
+regression directions over check ids — so "what got fixed" and "what stayed
+green" are separate evidence. See [the eval example](examples/eval-repair).
 `plugin mcp-gateway` spawns one upstream MCP server and proxies stdio
 JSON-RPC; `tools/call` is authorized against TOML allow/deny patterns
 (deny-by-default) and every decision lands in `.exitzero/mcp-gateway/`
 audit logs. See [the plugin contract](docs/PLUGIN_API.md) for the config
-schema. `plugin ledger-publish` rolls receipts into a run record with
-rollback hints under `.exitzero/ledger/`; `--pr N` posts it via `gh` —
-explicitly, and only then.
+schema. `plugin mcp-gate` serves the completion gate itself over stdio
+JSON-RPC: hosts without a blocking stop hook register it so the agent calls
+the `check_completion` tool before declaring done — advisory, not enforced.
+The [agent-plugin directory](agent-plugin/) packages it with a skill and
+`.mcp.json` for Agent Plugins-style hosts. `plugin ledger-publish` rolls
+receipts into a run record with rollback hints under `.exitzero/ledger/`;
+`--pr N` posts it via `gh` — explicitly, and only then.
 
 `check --reuse` shortens iterative loops: a check is recorded as `reused`
 instead of re-executed only when a prior receipt passed that check against
@@ -199,7 +221,14 @@ tool version and the policy hash — plugin code changes do not invalidate
 reuse, so re-verify after upgrading plugins. Treat `.exitzero/runs` as a
 trust boundary: receipts are unsigned local evidence, so use `--reuse`
 only where the runs directory is not attacker-writable or restored from
-an untrusted cache.
+an untrusted cache. A check can opt out with `reuse = false` in its
+`[[checks]]` table — required for checks whose correctness depends on
+state outside hashed file inputs, such as `python.test-integrity`'s git
+baseline.
+
+`check --diff REF` limits verification to files changed against a git ref
+or range — the PR-scoped pattern documented in [the CI section](docs/HOOKS.md).
+It narrows evidence to the changed set; keep a full `check` on release paths.
 
 Gate commands — `check`, `lint-config`, and `hooks run` — report outcomes
 through exit codes:
@@ -296,7 +325,9 @@ packages/core              policy, CLI, hook slots, plugin loader, receipts
 packages/plugin-verify     verification rules and command checks
 packages/plugin-harness    configuration lint; bounded eval command
 packages/plugin-mcp-gateway  stdio MCP proxy with a TOML tool allowlist
+packages/plugin-mcp-gate     stdio completion-gate MCP server (check_completion)
 packages/plugin-ledger       run-record aggregation and rollback hints
+agent-plugin/                Agent Plugins packaging: manifest, .mcp.json, skill
 fixtures/                  manifest-scored cases (one declared live-only skip)
 examples/sample/           runnable error-text/type/order contract example
 examples/eval-repair/      scripted multi-turn eval scenario

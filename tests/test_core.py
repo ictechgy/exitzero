@@ -830,5 +830,426 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertIn("harness.config", rules)
 
 
+class AdapterHookTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+
+    def cli(self, *args, stdin=None):
+        return subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *args],
+                              input=stdin, capture_output=True, text=True, timeout=30)
+
+    def init(self):
+        result = self.cli("init")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def install(self, adapter):
+        result = self.cli("hooks", "install", "--adapter", adapter)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return result
+
+    def run_hook(self, adapter, payload, *extra):
+        return self.cli("hooks", "run", "--adapter", adapter, "--event", "stop",
+                        *extra, stdin=json.dumps(payload))
+
+    def break_source(self):
+        (self.root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+
+    def lint_rules(self):
+        result = self.cli("lint-config", "--format", "json")
+        payload = json.loads(result.stdout)
+        return payload, [f["rule"] for f in payload["findings"]]
+
+    def stop_entries(self, path):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return [entry for group in data["hooks"]["Stop"] for entry in group["hooks"]]
+
+    def test_claude_install_writes_nested_stop_entry_and_manifest_digest(self):
+        self.init()
+        result = self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        entries = self.stop_entries(settings)
+        self.assertEqual(len(entries), 1)
+        entry = entries[0]
+        self.assertEqual(entry["type"], "command")
+        self.assertEqual(entry["timeout"], 120)
+        self.assertIn("hooks run --adapter claude --event stop", entry["command"])
+        self.assertIn("allowManagedHooksOnly", result.stdout)
+        manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
+        self.assertIn(".claude/settings.json", manifest["entries"])
+        self.assertNotIn(".claude/settings.json", manifest["files"])
+        self.assertEqual(len(manifest["entries"][".claude/settings.json"]), 64)
+        self.assertFalse(data.get("allowManagedHooksOnly"))
+
+    def test_codex_install_writes_dedicated_hooks_file_with_file_digest(self):
+        self.init()
+        result = self.install("codex")
+        self.assertIn("trust", result.stdout.lower())
+        entries = self.stop_entries(self.root / ".codex/hooks.json")
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["timeout"], 120)
+        self.assertIn("--adapter codex", entries[0]["command"])
+        manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
+        self.assertIn(".codex/hooks.json", manifest["files"])
+        self.assertNotIn(".codex/hooks.json", manifest["entries"])
+
+    def test_cursor_install_includes_loop_limit_fail_closed_and_timeout(self):
+        self.init()
+        # Existing foreign entries must survive installation.
+        hooks_path = self.root / ".cursor/hooks.json"
+        hooks_path.parent.mkdir()
+        hooks_path.write_text(json.dumps({"version": 1, "hooks": {"stop": [
+            {"command": "foreign-tool --gate", "loop_limit": 3}]}}), encoding="utf-8")
+        self.install("cursor")
+        data = json.loads(hooks_path.read_text(encoding="utf-8"))
+        stops = data["hooks"]["stop"]
+        self.assertEqual(len(stops), 2)
+        self.assertEqual(stops[0], {"command": "foreign-tool --gate", "loop_limit": 3})
+        owned = stops[1]
+        self.assertEqual(owned["loop_limit"], 1)
+        self.assertIs(owned["failClosed"], True)
+        self.assertEqual(owned["timeout"], 120)
+        manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
+        self.assertIn(".cursor/hooks.json", manifest["files"])
+
+    def test_reinstall_is_idempotent_and_drops_stale_entries(self):
+        self.init()
+        self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        first = settings.read_text(encoding="utf-8")
+        self.install("claude")
+        self.assertEqual(settings.read_text(encoding="utf-8"), first)
+        # A stale exitzero entry from an older root must be pruned on reinstall;
+        # foreign entries stay untouched.
+        data = json.loads(first)
+        data["hooks"]["Stop"].append({"hooks": [
+            {"type": "command", "command": "/old/root exitzero hooks run --adapter claude --event stop"},
+            {"type": "command", "command": "foreign --check"}]})
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        self.install("claude")
+        entries = self.stop_entries(settings)
+        commands = [entry["command"] for entry in entries]
+        self.assertEqual(len(entries), 2)
+        self.assertIn("foreign --check", commands)
+        self.assertNotIn("/old/root exitzero hooks run --adapter claude --event stop", commands)
+
+    def test_install_preserves_unrelated_settings_keys(self):
+        self.init()
+        settings = self.root / ".claude/settings.json"
+        settings.parent.mkdir()
+        settings.write_text(json.dumps({"theme": "dark", "permissions": {"allow": ["Read"]}}),
+                            encoding="utf-8")
+        self.install("claude")
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        self.assertEqual(data["theme"], "dark")
+        self.assertEqual(data["permissions"], {"allow": ["Read"]})
+        self.assertEqual(len(self.stop_entries(settings)), 1)
+
+    def test_claude_failure_returns_decision_block_and_pass_returns_empty(self):
+        self.init()
+        self.break_source()
+        result = self.run_hook("claude", {})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("Receipt:", payload["reason"])
+        receipt = payload["reason"].split("Receipt: ")[1].split(". ")[0]
+        self.assertTrue((self.root / receipt).is_file())
+        (self.root / "broken.py").write_text("def broken():\n    return 1\n")
+        result = self.run_hook("claude", {})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+
+    def test_codex_failure_returns_decision_block(self):
+        self.init()
+        self.break_source()
+        result = self.run_hook("codex", {"session_id": "abc"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["decision"], "block")
+        self.assertIn("exitzero failed", payload["reason"])
+
+    def test_invalid_json_persists_receipt_and_exits_two(self):
+        self.init()
+        for adapter in ("claude", "codex"):
+            result = self.cli("hooks", "run", "--adapter", adapter, "--event", "stop",
+                              stdin="{not json")
+            self.assertEqual(result.returncode, 2, adapter + result.stdout + result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertIn("error", payload)
+            self.assertTrue((self.root / payload["receipt"]).is_file())
+
+    def test_adapter_rejects_unsupported_events(self):
+        self.init()
+        for adapter in ("claude", "codex"):
+            result = self.cli("hooks", "run", "--adapter", adapter, "--event", "preToolUse",
+                              stdin="{}")
+            self.assertEqual(result.returncode, 2, adapter)
+            self.assertIn("does not handle event", result.stderr)
+
+    def test_lint_ignores_unrelated_shared_settings_edits(self):
+        self.init()
+        self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["theme"] = "light"
+        data["hooks"]["Stop"].append({"hooks": [{"type": "command", "command": "foreign"}]})
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertEqual(payload["exit_code"], 0, payload)
+        self.assertNotIn("harness.hooks-drift", rules)
+
+    def test_lint_flags_managed_entry_edit_and_removal(self):
+        self.init()
+        self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["hooks"]["Stop"][0]["hooks"][0]["timeout"] = 30
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertEqual(payload["exit_code"], 1)
+        self.assertIn("harness.hooks-drift", rules)
+        # Deleting the managed entry also drifts.
+        data["hooks"]["Stop"][0]["hooks"] = []
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertIn("harness.hooks-drift", rules)
+
+    def test_lint_warns_when_managed_hooks_only_disables_gate(self):
+        self.init()
+        self.install("claude")
+        settings = self.root / ".claude/settings.json"
+        data = json.loads(settings.read_text(encoding="utf-8"))
+        data["allowManagedHooksOnly"] = True
+        settings.write_text(json.dumps(data), encoding="utf-8")
+        payload, rules = self.lint_rules()
+        self.assertIn("harness.hooks-managed-only", rules)
+        self.assertEqual(payload["exit_code"], 0, payload)
+
+    def test_invalid_existing_settings_block_install(self):
+        self.init()
+        settings = self.root / ".claude/settings.json"
+        settings.parent.mkdir()
+        settings.write_text("{broken json", encoding="utf-8")
+        result = self.cli("hooks", "install", "--adapter", "claude")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("exitzero:", result.stderr + result.stdout)
+
+
+class TestIntegrityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for args in (["init"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+            subprocess.run(["git", "-C", str(self.root), *args],
+                           capture_output=True, check=True, timeout=15)
+        (self.root / "exitzero.toml").write_text(
+            'version = 1\nplugins = ["exitzero_verify"]\n'
+            '[[checks]]\nid = "integrity"\nkind = "python.test-integrity"\n'
+            'paths = ["tests/**/*.py"]\nreuse = false\n', encoding="utf-8")
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *args],
+                              capture_output=True, text=True, timeout=30)
+
+    def commit(self, *paths):
+        for path in paths:
+            full = self.root / path
+            full.parent.mkdir(parents=True, exist_ok=True)
+            if not full.exists():
+                full.write_text("", encoding="utf-8")
+        subprocess.run(["git", "-C", str(self.root), "add", "-A"],
+                       capture_output=True, check=True, timeout=15)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-m", "baseline", "--no-gpg-sign"],
+                       capture_output=True, check=True, timeout=15)
+
+    def check(self, expected):
+        result = self.cli("check", "--format", "json")
+        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        return json.loads(result.stdout)
+
+    def write_test(self, name="tests/test_app.py", body=None):
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body if body is not None else
+                        "def test_one():\n    assert app() == 1\n\ndef test_two():\n    assert app() == 2\n",
+                        encoding="utf-8")
+        return path
+
+    def test_deleted_test_file_is_flagged(self):
+        self.write_test()
+        self.commit()
+        (self.root / "tests/test_app.py").unlink()
+        payload = self.check(1)
+        messages = [f["message"] for f in payload["findings"]]
+        self.assertTrue(any("deleted" in message for message in messages), messages)
+
+    def test_removed_test_case_and_assertions_are_flagged(self):
+        self.write_test()
+        self.commit()
+        self.write_test(body="def test_one():\n    assert app() == 1\n")
+        payload = self.check(1)
+        messages = [f["message"] for f in payload["findings"]]
+        self.assertTrue(any("test_two" in message for message in messages), messages)
+        self.assertTrue(any("reduced from 2 to 1" in message for message in messages), messages)
+
+    def test_new_skip_markers_are_flagged(self):
+        self.write_test()
+        self.commit()
+        self.write_test(body=(
+            "import pytest\n\n@pytest.mark.skip(reason='later')\n"
+            "def test_one():\n    assert app() == 1\n\ndef test_two():\n    pytest.xfail('broken')\n"))
+        payload = self.check(1)
+        messages = [f["message"] for f in payload["findings"]]
+        self.assertTrue(any("pytest.mark.skip" in message for message in messages), messages)
+        self.assertTrue(any("pytest.xfail" in message for message in messages), messages)
+
+    def test_strengthened_tests_pass_and_unrelated_deletions_ignored(self):
+        self.write_test()
+        (self.root / "docs").mkdir()
+        (self.root / "docs/note.md").write_text("x", encoding="utf-8")
+        self.commit()
+        self.write_test(body="def test_one():\n    assert app() == 1\n"
+                             "def test_two():\n    assert app() == 2\n    assert app() == 3\n")
+        (self.root / "docs/note.md").unlink()
+        self.check(0)
+
+    def test_allow_options_relax_findings(self):
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text() +
+                          '[checks.options]\nallow_deletions = true\nallow_skip_markers = true\n'
+                          'max_removed_assertions = 5\n')
+        self.write_test()
+        self.commit()
+        (self.root / "tests/test_app.py").unlink()
+        self.check(0)
+
+    def test_missing_git_or_bad_base_is_operational_error(self):
+        self.write_test()
+        payload = self.check(2)
+        self.assertIn("core.error", [f["rule"] for f in payload["findings"]])
+        self.commit()
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text() + '[checks.options]\nbase = "nosuchref"\n')
+        payload = self.check(2)
+        self.assertIn("core.error", [f["rule"] for f in payload["findings"]])
+
+    def test_reuse_false_check_is_never_reused(self):
+        self.write_test()
+        self.commit()
+        first = self.check(0)
+        # spec.paths still record as inputs for evidence; the reuse opt-out
+        # keeps a moved baseline from serving a stale pass.
+        self.assertEqual(first["checks"][0]["input_files"], ["tests/test_app.py"])
+        second = self.check(0)
+        self.assertEqual(second["checks"][0]["status"], "passed")
+        payload = self.cli("check", "--reuse", "--format", "json")
+        self.assertEqual(payload.returncode, 0)
+        self.assertEqual(json.loads(payload.stdout)["checks"][0]["status"], "passed")
+
+    def test_subdirectory_root_uses_repo_prefix(self):
+        sub = self.root / "pkg"
+        sub.mkdir()
+        (sub / "exitzero.toml").write_text(
+            'version = 1\nplugins = ["exitzero_verify"]\n'
+            '[[checks]]\nid = "integrity"\nkind = "python.test-integrity"\n'
+            'paths = ["tests/**/*.py"]\n', encoding="utf-8")
+        (sub / "tests").mkdir()
+        (sub / "tests/test_sub.py").write_text("def test_a():\n    assert True\n", encoding="utf-8")
+        self.commit()
+        (sub / "tests/test_sub.py").write_text("def test_a():\n    pass\n", encoding="utf-8")
+        result = subprocess.run([sys.executable, str(CLI), "--root", str(sub),
+                                 "check", "--format", "json"],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        messages = [f["message"] for f in json.loads(result.stdout)["findings"]]
+        self.assertTrue(any("reduced from 1 to 0" in message for message in messages), messages)
+
+
+class DiffScopeTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        for args in (["init"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+            subprocess.run(["git", "-C", str(self.root), *args],
+                           capture_output=True, check=True, timeout=15)
+
+    def cli(self, *args):
+        return subprocess.run([sys.executable, str(CLI), "--root", str(self.root), *args],
+                              capture_output=True, text=True, timeout=30)
+
+    def commit(self):
+        subprocess.run(["git", "-C", str(self.root), "add", "-A"],
+                       capture_output=True, check=True, timeout=15)
+        subprocess.run(["git", "-C", str(self.root), "commit", "-m", "base", "--no-gpg-sign"],
+                       capture_output=True, check=True, timeout=15)
+
+    def init_and_commit(self):
+        result = self.cli("init")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.commit()
+
+    def test_diff_scopes_checks_to_changed_files(self):
+        self.init_and_commit()
+        # A committed broken file must not block a diff-scoped run that did
+        # not touch it; untracked files are outside `git diff HEAD` too.
+        (self.root / "old.py").write_text("def broken(:\n", encoding="utf-8")
+        self.commit()
+        (self.root / "note.txt").write_text("unrelated\n", encoding="utf-8")
+        result = self.cli("check", "--diff", "HEAD", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["diff"], "HEAD")
+        inputs = {check["id"]: check["input_files"] for check in payload["checks"]
+                  if check["kind"] != "config-lint"}
+        self.assertTrue(all(files == [] for files in inputs.values()), inputs)
+        # Now the broken file itself changes — it enters scope and fails.
+        (self.root / "old.py").write_text("def still_broken(:\n", encoding="utf-8")
+        result = self.cli("check", "--diff", "HEAD", "--format", "json")
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        syntax = next(check for check in payload["checks"] if check["id"] == "syntax")
+        self.assertEqual(syntax["input_files"], ["old.py"])
+        self.assertEqual(syntax["status"], "failed")
+
+    def test_diff_skips_deleted_and_unresolvable_ref_errors(self):
+        self.init_and_commit()
+        (self.root / "exitzero_sample.py").unlink()
+        result = self.cli("check", "--diff", "HEAD", "--format", "json")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.cli("check", "--diff", "nosuchref", "--format", "json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("core.error", [f["rule"] for f in json.loads(result.stdout)["findings"]])
+
+    def test_reuse_field_must_be_boolean(self):
+        self.init_and_commit()
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text().replace(
+            'id = "syntax"', 'id = "syntax"\nreuse = "yes"'))
+        result = self.cli("check", "--format", "json")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("core.error", [f["rule"] for f in json.loads(result.stdout)["findings"]])
+
+    def test_report_intoto_wraps_latest_receipt(self):
+        self.init_and_commit()
+        check = self.cli("check", "--format", "json")
+        self.assertEqual(check.returncode, 0)
+        result = self.cli("report", "--format", "intoto")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        statement = json.loads(result.stdout)
+        self.assertEqual(statement["_type"], "https://in-toto.io/Statement/v1")
+        self.assertTrue(statement["predicateType"].startswith("https://"))
+        predicate = statement["predicate"]
+        self.assertEqual(predicate["run_id"], json.loads(check.stdout)["run_id"])
+        subject = statement["subject"][0]
+        canonical = json.dumps(predicate, sort_keys=True, separators=(",", ":"),
+                               ensure_ascii=False).encode("utf-8")
+        self.assertEqual(subject["digest"]["sha256"], hashlib.sha256(canonical).hexdigest())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -100,6 +100,12 @@ class HarnessEvalTests(unittest.TestCase):
             self.assertTrue(all(turn["receipt"]["run_id"] for turn in turns))
             # Reports keep findings and ids but never the per-file input maps.
             self.assertTrue(all("inputs" not in turn["receipt"] for turn in turns))
+            # The repair turn records SWE-bench-style check transitions:
+            # syntax went fail_to_pass while the linter stayed pass_to_pass.
+            self.assertNotIn("transitions", turns[0])
+            transitions = turns[1]["transitions"]
+            self.assertEqual(transitions["fail_to_pass"], ["syntax"])
+            self.assertEqual(transitions["pass_to_pass"], ["harness.config"])
 
     def test_mismatched_turn_fails_scenario(self):
         with tempfile.TemporaryDirectory() as tmp:

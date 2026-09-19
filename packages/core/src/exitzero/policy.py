@@ -122,7 +122,7 @@ def load_policy(path: Path) -> dict:
         raise ValueError("At least one verification check is required")
     ids: set[str] = set()
     for check in checks:
-        if not isinstance(check, dict) or set(check) - {"id", "kind", "paths", "options"}:
+        if not isinstance(check, dict) or set(check) - {"id", "kind", "paths", "options", "reuse"}:
             raise ValueError("Invalid check fields")
         for key in ("id", "kind"):
             if not isinstance(check.get(key), str) or not NAME.fullmatch(check[key]):
@@ -137,6 +137,8 @@ def load_policy(path: Path) -> dict:
             validate_relative(pattern)
         if not isinstance(check.get("options", {}), dict):
             raise ValueError("Check options must be a table")
+        if not isinstance(check.get("reuse", True), bool):
+            raise ValueError("Check reuse must be a boolean")
     if not isinstance(policy.get("harness", {}), dict):
         raise ValueError("harness must be a table")
     _validate_requirements(policy.get("requirements", []), ids)
@@ -165,7 +167,8 @@ def _validate_requirements(requirements: object, check_ids: set[str]) -> None:
 
 
 def specs(policy: dict) -> list[CheckSpec]:
-    return [CheckSpec(c["id"], c["kind"], tuple(c.get("paths", [])), c.get("options", {}))
+    return [CheckSpec(c["id"], c["kind"], tuple(c.get("paths", [])), c.get("options", {}),
+                      c.get("reuse", True))
             for c in policy["checks"]]
 
 

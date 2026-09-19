@@ -117,6 +117,29 @@ def _literal_prefix(parts: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(prefix)
 
 
+def match_path(relative: str, patterns: tuple[str, ...] | list[str]) -> bool:
+    """Match a repository-relative path against check glob patterns.
+
+    Complements ``select_files`` for paths that no longer exist in the
+    worktree — for example deleted files reported by a VCS diff, which a
+    filesystem walk can never select. Same semantics: real ``**``, excluded
+    and trailing-slash segments never match, patterns are validated.
+    """
+    candidate = PurePosixPath(relative).parts
+    if not candidate or any(part in EXCLUDED for part in candidate):
+        return False
+    for pattern in patterns:
+        validate_relative(pattern)
+        if pattern.endswith("/"):
+            continue
+        parts = PurePosixPath(pattern).parts
+        if any(part in EXCLUDED for part in parts):
+            continue
+        if _match_parts(tuple(parts), tuple(candidate)):
+            return True
+    return False
+
+
 def select_files(root: Path, patterns: tuple[str, ...] | list[str]) -> list[Path]:
     """Choose repository files matching glob patterns.
 

@@ -20,7 +20,9 @@ def register(registry):
 ```
 
 `Context` contains `root`, parsed `policy`, and `policy_path`. `CheckSpec` contains
-`id`, `kind`, `paths` and an `options` table. Check and lint handlers return a list
+`id`, `kind`, `paths`, an `options` table and `reuse` (the policy's per-check
+`reuse` boolean, default `true`; `false` excludes the check from `--reuse`
+result caching). Check and lint handlers return a list
 of `Finding`. Exceptions become operational errors (exit 2); they cannot pass a
 run. Findings must not include file contents, credentials or command output.
 
@@ -58,10 +60,13 @@ Shared helpers: plugins may import `exitzero.api` and `exitzero.services`;
 every other core module is internal and outside the `API_VERSION` contract.
 `exitzero.services.select_files(root, patterns)` returns sorted, deduplicated
 repository files; it rejects absolute paths, traversal, symlinks and
-secret-like paths. `exitzero.services.render_agents(policy)` returns the
+secret-like paths. `exitzero.services.match_path(relative, patterns)` applies
+the same glob semantics to one repository-relative path that may not exist —
+for example a deleted file reported by a VCS diff.
+`exitzero.services.render_agents(policy)` returns the
 complete managed section, with `<!-- exitzero:begin -->` and
 `<!-- exitzero:end -->`; `run_gate(root, policy_name, command)` executes one
-gate run (used by the harness eval replayer). A plugin declares the contract
+gate run (used by the harness eval replayer and the mcp-gate server). A plugin declares the contract
 it was written against with its own `API_VERSION = 1` literal — it must not
 re-export core's, which could advertise a contract it never verified.
 Plugins should validate their own `spec.options` and raise `ValueError` on
@@ -77,6 +82,12 @@ Verification kinds in v1:
   fingerprints every selectable Python file under all validated roots, including
   files outside `paths` and unreferenced modules, and detects membership changes.
 - `python.test-quality`: reject missing/empty/obviously vacuous test cases.
+- `python.test-integrity`: flag test weakening relative to a git baseline —
+  deleted test files, removed test cases, newly added skip/xfail markers and
+  net assertion loss. Options: `base` (default `HEAD`),
+  `allow_deletions`/`allow_skip_markers` (default `false`),
+  `max_removed_assertions` (default `0`). Requires a git worktree; declare
+  `reuse = false` on this check since its baseline is not a hashed file input.
 - `command`: execute `options.argv` without a shell; `{python}` expands to the
   current Python interpreter. `options.timeout` defaults to 30 seconds.
 

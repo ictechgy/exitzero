@@ -19,5 +19,5 @@ verify = "exitzero_verify"
 harness = "exitzero_harness"
 
 [tool.setuptools]
-packages = ["exitzero", "exitzero_verify", "exitzero_harness", "exitzero_mcp_gateway", "exitzero_ledger"]
-package-dir = {exitzero = "packages/core/src/exitzero", exitzero_verify = "packages/plugin-verify/src/exitzero_verify", exitzero_harness = "packages/plugin-harness/src/exitzero_harness", exitzero_mcp_gateway = "packages/plugin-mcp-gateway/src/exitzero_mcp_gateway", exitzero_ledger = "packages/plugin-ledger/src/exitzero_ledger"}
+packages = ["exitzero", "exitzero_verify", "exitzero_harness", "exitzero_mcp_gateway", "exitzero_mcp_gate", "exitzero_ledger"]
+package-dir = {exitzero = "packages/core/src/exitzero", exitzero_verify = "packages/plugin-verify/src/exitzero_verify", exitzero_harness = "packages/plugin-harness/src/exitzero_harness", exitzero_mcp_gateway = "packages/plugin-mcp-gateway/src/exitzero_mcp_gateway", exitzero_mcp_gate = "packages/plugin-mcp-gate/src/exitzero_mcp_gate", exitzero_ledger = "packages/plugin-ledger/src/exitzero_ledger"}

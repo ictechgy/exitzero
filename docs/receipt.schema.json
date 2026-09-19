@@ -10,6 +10,7 @@
     "started_at": {"type": "string", "format": "date-time"},
     "command": {"enum": ["check", "lint-config"]},
     "hook_slot": {"enum": [null, "PreToolUse", "PostToolUse", "pre-commit", "CI"]},
+    "diff": {"type": "string", "description": "Git ref or range the check selection was narrowed against (--diff). Absent on unscoped runs."},
     "policy_sha256": {"type": ["string", "null"], "pattern": "^[a-f0-9]{64}$"},
     "plugins": {"type": "array", "items": {"type": "string"}},
     "inputs": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^[a-f0-9]{64}$"}},

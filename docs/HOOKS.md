@@ -77,6 +77,51 @@ headless `cursor agent -p` mode loads project hooks (tool events such as
 only in the interactive loop. Do not rely on the stop gate in `-p` pipelines;
 use tool-event hooks or the CI slot there instead.
 
+## Claude Code
+
+```sh
+exitzero hooks install --adapter claude
+exitzero lint-config
+```
+
+Installation appends one `{type: "command", command, timeout: 120}` entry to
+`hooks.Stop[].hooks[]` in project `.claude/settings.json`. The file is shared
+configuration: unrelated keys and foreign hook groups are preserved, stale
+exitzero entries from older checkouts are pruned, and repeating installation is
+idempotent. Instead of a whole-file fingerprint, `.exitzero/hooks.json` records
+a canonical digest of the managed entry only, so editing unrelated settings does
+not report drift while changing or deleting the managed entry does. If
+`allowManagedHooksOnly` is set, lint-config warns that the installed gate cannot
+fire.
+
+The stop adapter reads the hook JSON object from stdin. A failed check returns
+`{"decision": "block", "reason": ...}`; the reason carries the same bounded
+receipt reference and diagnostic summary as the Cursor feedback. A passing check
+returns `{}`. Claude Code bounds consecutive Stop blocks natively, so the
+adapter reports the honest gate result on every stop instead of suppressing
+repeat feedback. Gate violations exit 0 with the JSON decision; operational or
+invalid-input errors exit 2 and still persist a receipt.
+
+Claude Code may ask to approve the project hook on the next session before it
+fires; managed policies can disable project hooks entirely. Live Claude Code
+verification has not been performed — protocol behavior is covered by tests
+only.
+
+## Codex
+
+```sh
+exitzero hooks install --adapter codex
+exitzero lint-config
+```
+
+Codex uses the same nested `hooks.Stop[].hooks[]` shape, stored in dedicated
+`.codex/hooks.json` rather than a shared settings file, so drift is tracked by
+whole-file fingerprint. The stdin/stdout contract is identical to the Claude
+adapter: `{"decision": "block", "reason": ...}` on failure, `{}` on pass, exit 2
+for operational errors. Codex gates hooks behind trust review; approve the hook
+prompt before the stop gate can fire. Live Codex verification has not been
+performed.
+
 ## Git pre-commit
 
 ```sh
@@ -109,3 +154,46 @@ Codes are 0 (pass), 1 (violation), 2 (configuration/execution/receipt error).
 Save `.exitzero/runs/*.json` as artifacts even when a command fails. Core slots
 are `PreToolUse`, `PostToolUse`, `pre-commit`, and `CI`; these names are an internal
 API, and adapters translate editor-specific event names.
+
+### CI verification pattern
+
+Re-run the gate in CI instead of trusting receipts an agent committed —
+receipts are unsigned local evidence. A typical PR job:
+
+```yaml
+- run: exitzero lint-config --format json
+- run: exitzero check --format json          # full gate on the merge checkout
+- run: exitzero check --diff origin/${{ github.base_ref }}...HEAD --format json
+  if: success()                              # optional: scoped per-file evidence
+- uses: actions/upload-artifact@v4
+  if: always()
+  with: { name: exitzero-receipts, path: .exitzero/runs/ }
+```
+
+`check --diff REF` restricts each check's file selection — and the recorded
+`input_files` — to paths changed against a git ref or range (anything
+`git diff` resolves, e.g. `origin/main...HEAD` for merge-base PR scope).
+Deleted, excluded and credential-like paths drop out; a check whose scope has
+no changed files records a vacuous pass with an empty `input_files`, and the
+receipt's `diff` field records the range. An unresolvable ref or missing git
+is an operational error (exit 2). `--diff` narrows verification scope — it is
+evidence about the changed set, not a substitute for the full gate on release
+paths.
+
+`exitzero report --format intoto` exports the latest receipt wrapped in an
+in-toto Statement v1 (`predicateType: https://exitzero.dev/attestations/gate/v1`)
+for archival or downstream attestation pipelines. The statement is unsigned;
+signing with an external key (sigstore, DSSE) is a deployment decision, not
+something the tool fabricates locally.
+
+## Hosts without stop hooks
+
+Some hosts cannot run a blocking stop hook at all — Windsurf-class IDEs
+whose hooks are observe-only, headless runners, or `cursor agent -p` where
+the project hooks load but `stop` never fires. For those, `exitzero plugin
+mcp-gate` serves the gate as an MCP server: register it and the agent calls
+the `check_completion` tool before declaring done, getting the verdict plus
+a receipt reference over stdio JSON-RPC. This is advisory — the agent
+chooses to call it — so prefer a real hook wherever one exists. The
+[agent-plugin directory](../agent-plugin/) packages the server with a
+skill and `.mcp.json` for Agent Plugins-style hosts.

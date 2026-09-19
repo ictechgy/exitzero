@@ -9,7 +9,7 @@ import subprocess
 
 from . import __version__
 from .api import CheckSpec, Context, Finding, Registry
-from .files import safe_path, select_files, sha256_file
+from .files import EXCLUDED, is_sensitive, match_path, safe_path, select_files, sha256_file
 from .ledger import persist
 from .hooks import installed_inputs
 from .loader import discover
@@ -41,11 +41,12 @@ def _spec_patterns(context: Context, registry: Registry, spec: CheckSpec) -> lis
     return patterns
 
 
-def _snapshot(context: Context, registry: Registry, collect: dict | None = None) -> dict[str, str]:
+def _snapshot(context: Context, registry: Registry, collect: dict | None = None,
+              check_specs: list[CheckSpec] | None = None) -> dict[str, str]:
     root, policy = context.root, context.policy
     files = {context.policy_path}
     patterns = []
-    for spec in specs(policy):
+    for spec in check_specs if check_specs is not None else specs(policy):
         spec_patterns = _spec_patterns(context, registry, spec)
         if collect is not None:
             collect[spec.id] = sorted(path.relative_to(root).as_posix()
@@ -98,10 +99,11 @@ def _reusable_checks(root: Path, current_inputs: dict[str, list[str]], current_s
     list identical to today's selection, every listed input still hashes to the
     recorded value, and the source entry reported no findings. Added, deleted
     or modified inputs re-run the check; checks with no declared file inputs
-    can never prove their inputs are stable and always re-run.
+    can never prove their inputs are stable and always re-run, as do checks
+    that opt out with ``reuse = false``.
     """
     reusable: dict[str, tuple[dict, dict]] = {}
-    wanted = {spec.id for spec in check_specs if current_inputs.get(spec.id)}
+    wanted = {spec.id for spec in check_specs if spec.reuse and current_inputs.get(spec.id)}
     for prior in _prior_check_receipts(root):
         if (prior.get("exit_code") not in (0, 1)
                 or prior.get("tool_version") != __version__
@@ -161,8 +163,49 @@ def _requirement_findings(receipt: dict, outcomes: dict[str, str], valid: bool) 
     return findings
 
 
+def _diff_changed_files(root: Path, ref: str) -> list[str]:
+    """List root-relative files changed against a git ref or range.
+
+    Accepts anything ``git diff`` resolves (``HEAD``, ``main...HEAD``); an
+    unresolvable ref is an operational error. Deleted, excluded and
+    credential-like paths are dropped — a check cannot inspect them.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "diff", "--name-only", "-z", "--relative", ref, "--"],
+            capture_output=True, text=True, timeout=15, check=False)
+    except FileNotFoundError:
+        raise ValueError("--diff requires a git executable on PATH") from None
+    except subprocess.TimeoutExpired:
+        raise ValueError("git diff for --diff timed out") from None
+    if result.returncode != 0:
+        raise ValueError(f"--diff range {ref!r} is not a resolvable git revision")
+    changed = []
+    for relative in result.stdout.split("\0"):
+        if not relative:
+            continue
+        parts = Path(relative).parts
+        if any(part in EXCLUDED for part in parts) or is_sensitive(Path(relative)):
+            continue
+        try:
+            candidate = safe_path(root, relative)
+        except ValueError:
+            continue
+        if candidate.is_file():
+            changed.append(relative)
+    return sorted(set(changed))
+
+
+def _narrow_specs(checks: list[CheckSpec], changed: list[str]) -> list[CheckSpec]:
+    """Restrict each check's selection to paths present in the diff set."""
+    return [CheckSpec(spec.id, spec.kind,
+                      tuple(relative for relative in changed if match_path(relative, spec.paths)),
+                      spec.options, spec.reuse)
+            for spec in checks]
+
+
 def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
-        input_error: bool = False, reuse: bool = False) -> dict:
+        input_error: bool = False, reuse: bool = False, diff: str | None = None) -> dict:
     started = time.monotonic()
     receipt = {"schema_version": 1, "tool_version": __version__, "run_id": uuid.uuid4().hex,
                "started_at": datetime.now(timezone.utc).isoformat(), "command": command,
@@ -198,8 +241,13 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         checks = specs(policy)
         if any(spec.kind not in registry.checks for spec in checks):
             raise ValueError("Policy references an unregistered check kind")
+        if diff is not None:
+            # --diff narrows both the checked selection and the stability
+            # snapshot to the changed set; the receipt records the range.
+            checks = _narrow_specs(checks, _diff_changed_files(root, diff))
+            receipt["diff"] = diff
         check_inputs: dict[str, list[str]] = {}
-        receipt["inputs"] = _snapshot(context, registry, check_inputs)
+        receipt["inputs"] = _snapshot(context, registry, check_inputs, checks)
         for name, linter in registry.linters.items():
             result = _findings(linter(context))
             findings.extend(result)
@@ -217,6 +265,14 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
                                               "input_files": check_inputs.get(spec.id, []),
                                               "reused_from": source_receipt["run_id"]})
                     continue
+                if diff is not None and not spec.paths:
+                    # Nothing in this check's scope changed: vacuous pass with
+                    # an empty input list so the receipt shows no files were
+                    # examined rather than implying a fresh full verification.
+                    verification_outcomes[spec.id] = "passed"
+                    receipt["checks"].append({"id": spec.id, "kind": spec.kind, "status": "passed",
+                                              "finding_count": 0, "input_files": []})
+                    continue
                 result = _findings(registry.checks[spec.kind](context, spec))
                 findings.extend(result)
                 errors = [finding for finding in result if finding.severity == "error"]
@@ -227,7 +283,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
             if slot is not None:
                 for handler in registry.hooks.get(slot, []):
                     findings.extend(_findings(handler(context, slot)))
-        if _snapshot(context, registry) != receipt["inputs"]:
+        if _snapshot(context, registry, check_specs=checks) != receipt["inputs"]:
             inputs_changed = True
             findings.append(Finding("core.inputs-changed", "Inspected files changed during the run; rerun against stable inputs."))
     except (Exception, SystemExit, KeyboardInterrupt) as error:

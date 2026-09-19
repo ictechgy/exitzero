@@ -1,5 +1,5 @@
 version = 1
-plugins = ["exitzero_verify", "exitzero_harness", "exitzero_mcp_gateway", "exitzero_ledger"]
+plugins = ["exitzero_verify", "exitzero_harness", "exitzero_mcp_gateway", "exitzero_mcp_gate", "exitzero_ledger"]
 
 [[checks]]
 id = "syntax"
@@ -11,7 +11,7 @@ id = "imports"
 kind = "python.imports"
 paths = ["packages/**/*.py"]
 [checks.options]
-roots = ["packages/core/src", "packages/plugin-verify/src", "packages/plugin-harness/src", "packages/plugin-mcp-gateway/src", "packages/plugin-ledger/src"]
+roots = ["packages/core/src", "packages/plugin-verify/src", "packages/plugin-harness/src", "packages/plugin-mcp-gateway/src", "packages/plugin-mcp-gate/src", "packages/plugin-ledger/src"]
 allow_modules = []
 
 [[checks]]
@@ -28,5 +28,5 @@ argv = ["{python}", "scripts/run_tests.py"]
 timeout = 60
 
 [harness]
-config_files = []
+config_files = ["agent-plugin/.mcp.json"]
 rules = [{id = "completion-evidence", value = "Require runner exit codes and persisted receipts before claiming completion."}]
