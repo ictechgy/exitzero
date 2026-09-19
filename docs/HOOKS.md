@@ -119,8 +119,16 @@ Codex uses the same nested `hooks.Stop[].hooks[]` shape, stored in dedicated
 whole-file fingerprint. The stdin/stdout contract is identical to the Claude
 adapter: `{"decision": "block", "reason": ...}` on failure, `{}` on pass, exit 2
 for operational errors. Codex gates hooks behind trust review; approve the hook
-prompt before the stop gate can fire. Live Codex verification has not been
-performed.
+prompt before the stop gate can fire.
+
+Live verification on codex-cli 0.155.0 (2026-09-19) confirmed the headless
+`codex exec` session fires the installed `stop` hook: a failing gate returned
+the block decision, the agent read the referenced receipt, repaired the file
+and stopped again into a passing gate — the same repair loop as the Cursor
+adapter. Unlike Cursor's `-p`, Codex's non-interactive mode honors stop hooks,
+but trust review applies: persist trust in an interactive session first, or
+pass `--dangerously-bypass-hook-trust` for automation that vets its hook
+sources. Live Claude Code verification has not been performed.
 
 ## Git pre-commit
 
