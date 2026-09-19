@@ -180,6 +180,7 @@ exitzero report --format json
 exitzero report --format intoto   # unsigned in-toto Statement wrapping the latest receipt
 exitzero plugin harness-eval --scenario examples/eval-repair   # opt-in bounded eval
 exitzero plugin mcp-gateway --config gateway.toml              # stdio MCP proxy
+exitzero plugin mcp-gate                                       # stdio completion-gate MCP server
 exitzero plugin ledger-publish                                 # aggregate run record
 ```
 
@@ -196,9 +197,13 @@ green" are separate evidence. See [the eval example](examples/eval-repair).
 JSON-RPC; `tools/call` is authorized against TOML allow/deny patterns
 (deny-by-default) and every decision lands in `.exitzero/mcp-gateway/`
 audit logs. See [the plugin contract](docs/PLUGIN_API.md) for the config
-schema. `plugin ledger-publish` rolls receipts into a run record with
-rollback hints under `.exitzero/ledger/`; `--pr N` posts it via `gh` —
-explicitly, and only then.
+schema. `plugin mcp-gate` serves the completion gate itself over stdio
+JSON-RPC: hosts without a blocking stop hook register it so the agent calls
+the `check_completion` tool before declaring done — advisory, not enforced.
+The [agent-plugin directory](agent-plugin/) packages it with a skill and
+`.mcp.json` for Agent Plugins-style hosts. `plugin ledger-publish` rolls
+receipts into a run record with rollback hints under `.exitzero/ledger/`;
+`--pr N` posts it via `gh` — explicitly, and only then.
 
 `check --reuse` shortens iterative loops: a check is recorded as `reused`
 instead of re-executed only when a prior receipt passed that check against
@@ -320,7 +325,9 @@ packages/core              policy, CLI, hook slots, plugin loader, receipts
 packages/plugin-verify     verification rules and command checks
 packages/plugin-harness    configuration lint; bounded eval command
 packages/plugin-mcp-gateway  stdio MCP proxy with a TOML tool allowlist
+packages/plugin-mcp-gate     stdio completion-gate MCP server (check_completion)
 packages/plugin-ledger       run-record aggregation and rollback hints
+agent-plugin/                Agent Plugins packaging: manifest, .mcp.json, skill
 fixtures/                  manifest-scored cases (one declared live-only skip)
 examples/sample/           runnable error-text/type/order contract example
 examples/eval-repair/      scripted multi-turn eval scenario

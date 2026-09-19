@@ -126,7 +126,7 @@ def match_path(relative: str, patterns: tuple[str, ...] | list[str]) -> bool:
     and trailing-slash segments never match, patterns are validated.
     """
     candidate = PurePosixPath(relative).parts
-    if not candidate:
+    if not candidate or any(part in EXCLUDED for part in candidate):
         return False
     for pattern in patterns:
         validate_relative(pattern)

@@ -1,0 +1,8 @@
+{
+  "name": "exitzero",
+  "version": "0.2.0",
+  "description": "Completion-gate evidence for agent sessions: an MCP check_completion tool plus a skill that tells agents to verify before declaring done.",
+  "license": "MIT",
+  "skills": ["./skills/"],
+  "mcpServers": "./.mcp.json"
+}

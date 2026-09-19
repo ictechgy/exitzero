@@ -185,3 +185,15 @@ in-toto Statement v1 (`predicateType: https://exitzero.dev/attestations/gate/v1`
 for archival or downstream attestation pipelines. The statement is unsigned;
 signing with an external key (sigstore, DSSE) is a deployment decision, not
 something the tool fabricates locally.
+
+## Hosts without stop hooks
+
+Some hosts cannot run a blocking stop hook at all — Windsurf-class IDEs
+whose hooks are observe-only, headless runners, or `cursor agent -p` where
+the project hooks load but `stop` never fires. For those, `exitzero plugin
+mcp-gate` serves the gate as an MCP server: register it and the agent calls
+the `check_completion` tool before declaring done, getting the verdict plus
+a receipt reference over stdio JSON-RPC. This is advisory — the agent
+chooses to call it — so prefer a real hook wherever one exists. The
+[agent-plugin directory](../agent-plugin/) packages the server with a
+skill and `.mcp.json` for Agent Plugins-style hosts.

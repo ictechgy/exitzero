@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "exitzero": {
+      "command": "exitzero",
+      "args": ["plugin", "mcp-gate"]
+    }
+  }
+}

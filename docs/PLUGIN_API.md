@@ -66,7 +66,7 @@ for example a deleted file reported by a VCS diff.
 `exitzero.services.render_agents(policy)` returns the
 complete managed section, with `<!-- exitzero:begin -->` and
 `<!-- exitzero:end -->`; `run_gate(root, policy_name, command)` executes one
-gate run (used by the harness eval replayer). A plugin declares the contract
+gate run (used by the harness eval replayer and the mcp-gate server). A plugin declares the contract
 it was written against with its own `API_VERSION = 1` literal — it must not
 re-export core's, which could advertise a contract it never verified.
 Plugins should validate their own `spec.options` and raise `ValueError` on
