@@ -134,6 +134,18 @@ direct/gate medians of **4.818/4.980 seconds**; the gate now includes the extra
 integrity check. Short runs and randomized upstream timers prevent treating the
 difference as a general performance estimate or comparing improvements across runs.
 
+[Linux run 35493351891](https://github.com/ictechgy/exitzero/actions/runs/35493351891)
+at `ce30e5b3acb2cf17783f46a9cf4fa0e1a1e97bb1` matched the same nine cases and both
+CI-slot verdicts. All 24 downloaded receipts matched the recorded exits and
+output; runtime/runner hashes matched the local checkout and the source remained
+unchanged. It used the same dependency versions with bundled npm 10.9.3. Direct/gate
+medians were **7.916/8.121 seconds** in that separate environment.
+
+[Main CI 35493315255](https://github.com/ictechgy/exitzero/actions/runs/35493315255)
+also passed the Python 3.11/3.14 gates and installed-wheel checks. The wheel runner
+retained ten receipts, including installed Node baseline/deletion/skip/repair
+verdicts of 0/1/1/0 and the existing actual Git-hook checks.
+
 ## Reproduce and inspect evidence
 
 Use Node 22.20.0, npm 11.6.2 and Python 3.11+. Prepare the reviewed public checkout

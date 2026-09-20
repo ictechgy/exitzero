@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — unreleased
+## 0.5.0 — released 2026-09-20
 
 - Opt-in `node.test-integrity` detects removed literal-named JS/TS tests and new
   skip/focus markers against a trusted local Git commit. It preserves in-scope
