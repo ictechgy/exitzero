@@ -248,7 +248,7 @@ only `out/host/index.js`: routing moved to its imported `chunk-OIOBEZTZ.js`.
 A subsequent local agentbelt fix follows bounded static imports within the packed
 ASAR modules. Required markers must occur together in a linked module; unrelated
 chunks, unsafe paths, missing entries and traversal-budget overruns are rejected.
-The 25 focused tests passed, including rejection of changed hashes without rewriting
+The 26 focused tests passed, including rejection of changed hashes without rewriting
 the baseline. After targeted installation, `agentbelt doctor` exited 0 and reported
 the existing OpenCode, Zcode and Kimi hashes as verified. Recorded compatibility
 and Zcode-profile bytes remained unchanged. This corrects compatibility discovery;
