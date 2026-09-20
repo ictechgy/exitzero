@@ -229,12 +229,17 @@ but Antigravity's stop-blocking decision word is `"continue"` rather than
 and the reason is injected as a system message, `{}` lets the agent stop.
 Hook commands run synchronously and block the agent loop.
 
-Live verification on Antigravity CLI 1.2.7 (2026-09-19) confirmed the
-interactive session fires the installed `Stop` hook: a failing gate
-returned `continue`, the agent read the receipt, repaired the file, fixed
-the drifted hook entry and stopped again into a passing gate. Headless
-`agy -p` loads `hooks.json` but does not execute hooks — the same gap as
-Cursor's `-p`; use tool-event hooks or the CI slot in pipelines.
+Live verification on Antigravity CLI 1.2.7 with published exitzero 0.5.1
+(2026-09-20) confirmed fail→continue→agent repair→pass in both interactive
+and headless sessions, using `gemini-3.8-flash-low`. The agent read the failing
+receipt and changed only the seeded Python file; configuration remained intact.
+
+The successful headless run explicitly selected a fresh isolated project with
+`--new-project`. Select the intended project (`--project` for an existing project)
+and inspect its `/hooks` listing before automation. An earlier negative attempt
+did not establish a general headless limitation; the previous blanket warning
+has been superseded by this successful run. Required CI remains the merge barrier.
+See [the scoped live evidence](LIVE_CLIENT_VALIDATION.md#antigravity-follow-up).
 
 ## GitHub Copilot CLI
 

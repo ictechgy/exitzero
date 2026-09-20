@@ -1,8 +1,10 @@
-# Claude and Gemini validation attempts
+# Live client validation
 
 Run date: 2026-09-20. The full model-driven repair loops remain **unverified**
 because both configured accounts rejected their live requests. The Gemini
-component test below found and verified a separate adapter fix.
+component test below found and verified a separate adapter fix. The subsequent
+Antigravity validation passed in interactive and headless modes; it is a separate
+client result.
 
 ## Actual CLI attempts
 
@@ -64,6 +66,47 @@ needed. The corrected budget is still finite: require CI for merge protection.
 Native behavior was checked against the installed implementation and the official
 [Gemini hook reference](https://geminicli.com/docs/hooks/reference/).
 
+## Antigravity follow-up
+
+The user offered Antigravity as an available alternative and flagged security
+concerns about other clients. Only Antigravity was used for this follow-up;
+OpenCode, Kimi, Zcode and Devin were not run. Validation used synthetic temporary
+projects and the published exitzero 0.5.1 wheel, not the implementation repository.
+
+Antigravity CLI 1.2.7 with `gemini-3.8-flash-low` completed the real model-driven
+loop in both modes:
+
+| Mode | Failed Stop receipt | Agent action | Passing Stop receipt |
+| --- | --- | --- | --- |
+| Interactive TTY | `a509b91207d04d7481aa521916ec56f1` (exit 1) | Read the receipt/source and repair `src/broken.py` | `402f5529ad4c4a1ea8b898b2cdc3f1f2` (exit 0) |
+| Headless `-p`, explicit `--new-project` | `53c0eaf436cd49368866ea76673c7c98` (exit 1) | Read the receipt/source and repair `src/broken.py` | `87122e31f95a4850a292c4f752876d5c` (exit 0) |
+
+Each run produced a failed and passing native gate receipt. The interactive
+observer recorded two Stop events in one conversation; the separate headless
+observer recorded the final Stop only. The sole
+failure finding was the seeded syntax error; the repaired file defines
+`answer()` returning 42. Policy, AGENTS and hook fingerprints remained unchanged.
+The controller never repaired the source or invoked a hook itself during these
+sessions. Both clients exited 0; the interactive controller closed the idle
+session after collecting the successful receipt.
+
+Runs used `--sandbox`, an explicit new project and test-only PreToolUse guards.
+The guards used matcher/`hooks` groups and allowed file reads for the receipt and
+fixture, with edits restricted to the fixture. Native guard logs recorded the
+actual file operations; no shell, MCP or network tool operation was observed.
+This is evidence for these bounded sessions, not a general client security audit.
+
+An exploratory first interactive run had no record of its flat PreToolUse guard
+executing and its PTY teardown stalled. The recorded result above uses a fresh
+project, the documented grouped guard shape and a corrected bounded PTY driver.
+That exploratory run is retained separately and is not used as scope-enforcement
+evidence.
+
+The successful headless run supersedes the earlier claim that this CLI version
+never executes hooks in `-p` mode. Project selection was explicit in both new
+runs; this does not establish why every earlier attempt failed. It also does not
+resolve the separate Claude Code and Gemini CLI account blockers.
+
 ## Retained evidence
 
 Local evidence is under `.exitzero/live-validation/claude-gemini/`:
@@ -76,3 +119,7 @@ Local evidence is under `.exitzero/live-validation/claude-gemini/`:
 
 Temporary project, driver and installed-package paths are recorded locally for
 reproduction and cleanup; personal paths and client output are not committed.
+
+Antigravity evidence is under `.exitzero/live-validation/agy-0.5.1/`: `summary.json`,
+`verified.json`, `headless-control.json`, four final receipts, native Stop/tool
+records, the bounded interactive driver and the fixture-only scope guard.
