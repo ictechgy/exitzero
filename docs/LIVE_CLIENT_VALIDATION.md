@@ -242,10 +242,17 @@ setup, the CLI advertised flags its parser rejected, walked upward for dotenv
 files, and denied the gate with `No permission client configured`. The final
 app-server route avoids that dotenv startup path
 and supplies the protocol client; it does not use the exploratory dotenv shim
-or disable permission checks. The installed guard's aggregate doctor still checks
-the old `out/host/index.js` location: the routing code now resides in a directly
-imported `chunk-OIOBEZTZ.js`. Its override logic and matching binary hashes were
-inspected; the global checker and launcher were not modified.
+or disable permission checks. The guard's earlier doctor failure came from checking
+only `out/host/index.js`: routing moved to its imported `chunk-OIOBEZTZ.js`.
+
+A subsequent local agentbelt fix follows bounded static imports within the packed
+ASAR modules. Required markers must occur together in a linked module; unrelated
+chunks, unsafe paths, missing entries and traversal-budget overruns are rejected.
+The 25 focused tests passed, including rejection of changed hashes without rewriting
+the baseline. After targeted installation, `agentbelt doctor` exited 0 and reported
+the existing OpenCode, Zcode and Kimi hashes as verified. Recorded compatibility
+and Zcode-profile bytes remained unchanged. This corrects compatibility discovery;
+it does not certify the GUI's privacy or change its launcher permissions.
 
 ## Kimi offline preparation
 
