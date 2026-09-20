@@ -25,9 +25,10 @@ class VerifyPluginTests(unittest.TestCase):
         self.assertEqual(
             set(registry.checks),
             {"python.syntax", "python.imports", "python.test-quality",
-             "python.test-integrity", "command"},
+             "python.test-integrity", "node.test-integrity", "command"},
         )
-        self.assertEqual(registry.check_inputs, {"python.imports": exitzero_verify.import_inputs})
+        self.assertEqual(registry.check_inputs, {"python.imports": exitzero_verify.import_inputs,
+                                                "node.test-integrity": exitzero_verify.node_integrity_inputs})
 
     def test_syntax_reports_invalid_python(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from exitzero.api import CheckSpec, Context, Finding
+from .node_integrity import check_integrity as check_node_integrity, integrity_inputs as node_integrity_inputs
 
 API_VERSION = 1
 
@@ -29,6 +30,7 @@ def register(registry: Any) -> None:
     registry.add_check("python.imports", check_imports, inputs=import_inputs)
     registry.add_check("python.test-quality", check_test_quality)
     registry.add_check("python.test-integrity", check_test_integrity)
+    registry.add_check("node.test-integrity", check_node_integrity, inputs=node_integrity_inputs)
     registry.add_check("command", check_command)
 
 

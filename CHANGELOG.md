@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0 — unreleased
+
+- Opt-in `node.test-integrity` detects removed literal-named JS/TS tests and new
+  skip/focus markers against a trusted local Git commit. It preserves in-scope
+  moves, checks duplicate title counts, and requires `reuse = false`. Unsupported
+  declarations fail visibly; JSX, assertion quality and dynamic registration
+  semantics remain outside its bounded lexical scope. No runtime dependency added.
+- `init --profile node --test-integrity-base REF` generates the check and test
+  paths without resolving/fetching Git refs or executing project commands.
+- Extend the real p-limit pilot with a Git baseline and deletion/skip controls;
+  extend installed-wheel acceptance with static Node fail/repair receipts.
+
 ## 0.4.0 — released 2026-09-20
 
 - Review fixes: doctor rejects disabled project hooks; diff-scoped checks that

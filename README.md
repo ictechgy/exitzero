@@ -167,9 +167,13 @@ dependencies and environment are not fingerprinted. Generated Node commands use
 `reuse = false` and run afresh. Existing project tools own JS/TS analysis; there
 is no bundled JavaScript parser or package manager.
 
-The [p-limit pilot](docs/PILOT_NODE.md) verifies real JS tests, lint and TypeScript
-declarations. It also records a limit: deleting a test can leave every command
-passing. The Node profile does not currently detect deleted or newly skipped tests.
+The [p-limit pilot](docs/PILOT_NODE.md) shows that deleting a test can leave all
+three commands passing. Opt into a Git comparison with
+`exitzero init --profile node --test-integrity-base origin/main` for a new policy,
+or add [`node.test-integrity`](docs/NODE_TEST_INTEGRITY.md) to an existing one.
+It checks literal-named JS/TS test deletions and new skip/focus markers; JSX and
+semantic assertion quality remain outside its scope. Use an independent trusted
+baseline in CI, and review the selected test paths.
 
 ## Put review requirements in the policy
 
@@ -239,6 +243,7 @@ ordering in executable tests. See [the sample](examples/sample).
 | `python.imports` | Unresolved modules and missing statically declared local module symbols |
 | `python.test-quality` | No test cases, empty tests, obvious constant-only assertions |
 | `python.test-integrity` | Test files deleted since a git base ref, removed test cases, new skip/xfail markers, net assertion loss |
+| `node.test-integrity` | Opt-in Git comparison of literal-named JS/TS tests and skip/focus markers; bounded lexical analysis |
 | `command` | A configured test/lint command fails or exceeds its timeout |
 | Harness lint | Generated AGENTS drift, installed-hook drift, JSON/TOML config shape errors (Cursor and Claude hook documents, MCP server tables), repeated/conflicting rule IDs |
 

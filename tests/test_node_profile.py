@@ -91,6 +91,28 @@ class NodeProfileTests(unittest.TestCase):
         self.assertEqual(path.read_bytes(), before)
         self.assertFalse((self.root / 'exitzero_sample.py').exists())
 
+    def test_integrity_is_explicit_offline_and_uses_a_trusted_base(self):
+        self.cli('init', '--profile', 'node', '--test-command', 'node --test',
+                 '--test-integrity-base', 'origin/main')
+        checks = load_policy(self.root / 'exitzero.toml')['checks']
+        integrity = checks[-1]
+        self.assertEqual(integrity['kind'], 'node.test-integrity')
+        self.assertEqual(integrity['options'], {'base': 'origin/main'})
+        self.assertFalse(integrity['reuse'])
+        self.assertIn('**/*.test.ts', integrity['paths'])
+        self.assertIn('**/test.js', integrity['paths'])
+        # Init/lint require no Git checkout and never resolve or fetch a ref.
+        self.cli('lint-config')
+
+    def test_integrity_generation_rejects_invalid_flags_before_writing(self):
+        for args in (('--profile', 'python', '--test-integrity-base', 'HEAD'),
+                     ('--profile', 'node', '--test-integrity-base=--help'),
+                     ('--profile', 'node', '--test-integrity-base', ''),
+                     ('--sync', '--profile', 'node', '--test-integrity-base', 'HEAD')):
+            with self.subTest(args=args):
+                self.cli('init', '--test-command', 'node --test', *args, expected=2)
+                self.assertFalse((self.root / 'exitzero.toml').exists())
+
 
 if __name__ == '__main__':
     unittest.main()

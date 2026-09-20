@@ -41,6 +41,8 @@ def parser() -> argparse.ArgumentParser:
     init.add_argument("--typecheck-command", metavar="COMMAND", help="Node profile type-check command")
     init.add_argument("--input-path", action="append", default=[], metavar="GLOB",
                       help="Additional Node input glob, for example JSON test fixtures; repeatable")
+    init.add_argument("--test-integrity-base", metavar="REF",
+                      help="Opt into Node test deletion/suppression checks against a trusted local Git commit")
     for name in ("check", "lint-config"):
         child = commands.add_parser(name)
         child.add_argument("--format", choices=("human", "json", "sarif"), default="human")
@@ -214,13 +216,15 @@ def _init_generation(args: argparse.Namespace) -> str:
         args.profile != "default" or args.source_root or args.allow_module
         or args.test_command is not None or args.review_command
         or args.lint_command is not None or args.typecheck_command is not None or args.input_path
+        or args.test_integrity_base is not None
     )
     if args.sync and generation_requested:
         raise ValueError("init --sync cannot be combined with policy generation options")
     if args.profile == "default" and generation_requested:
         raise ValueError("--profile python or node is required with generation options")
-    if args.profile != "node" and (args.lint_command is not None or args.typecheck_command is not None or args.input_path):
-        raise ValueError("lint/typecheck commands and input-path require --profile node")
+    if args.profile != "node" and (args.lint_command is not None or args.typecheck_command is not None or args.input_path
+                                   or args.test_integrity_base is not None):
+        raise ValueError("lint/typecheck commands, input-path and test-integrity-base require --profile node")
     if args.profile == "node" and args.allow_module:
         raise ValueError("allow-module only applies to --profile python")
     if args.profile == "default":
@@ -252,7 +256,7 @@ def _init_generation(args: argparse.Namespace) -> str:
         for pattern in args.input_path:
             validate_relative(pattern)
         select_files(Path(args.root).resolve(), args.input_path)
-        return node_profile_policy(roots, commands, args.input_path)
+        return node_profile_policy(roots, commands, args.input_path, args.test_integrity_base)
     return python_profile_policy(roots, args.allow_module, test_argv, review_argvs)
 
 

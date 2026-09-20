@@ -116,6 +116,12 @@ Verification kinds in v1:
   `reuse = false` on this check since its baseline is not a hashed file input.
 - `command`: execute `options.argv` without a shell; `{python}` expands to the
   current Python interpreter. `options.timeout` defaults to 30 seconds.
+- `node.test-integrity`: bounded lexical comparison of literal-named JS/TS test
+  declarations and suppression/focus markers against local Git. Options: `base`
+  (default `HEAD`), `functions` (default `test`, `it`, `describe`, `suite`). Requires
+  `reuse = false`; the input provider validates options without reading Git.
+  Missing/changed refs are operational errors, unsupported source is a finding.
+  See [supported forms and limits](NODE_TEST_INTEGRITY.md).
 
 ### Requirement mappings
 

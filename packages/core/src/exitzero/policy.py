@@ -103,7 +103,7 @@ def python_profile_policy(
 
 
 def node_profile_policy(source_roots: list[str], commands: list[tuple[str, list[str]]],
-                        input_paths: list[str]) -> str:
+                        input_paths: list[str], integrity_base: str | None = None) -> str:
     """Connect existing Node tools; never install packages or guess their flags."""
     extensions = ("js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts")
     roots = list(dict.fromkeys([*source_roots, "test", "tests"]))
@@ -126,6 +126,15 @@ def node_profile_policy(source_roots: list[str], commands: list[tuple[str, list[
         lines.extend(["", "[[checks]]", f"id = {json.dumps(check_id)}", 'kind = "command"',
                       'reuse = false', f"paths = {json.dumps(paths, ensure_ascii=False)}", '[checks.options]',
                       f"argv = {json.dumps(argv, ensure_ascii=False)}", 'timeout = 60'])
+    if integrity_base is not None:
+        if not isinstance(integrity_base, str) or not integrity_base.strip() or integrity_base.startswith("-") or "\0" in integrity_base:
+            raise ValueError("test-integrity-base must be a non-empty Git ref")
+        test_paths = [pattern for ext in ("js", "mjs", "cjs", "ts", "mts", "cts") for pattern in (
+            f"**/test.{ext}", f"**/*.test.{ext}", f"**/*.spec.{ext}",
+            f"**/test/**/*.{ext}", f"**/tests/**/*.{ext}", f"**/__tests__/**/*.{ext}")]
+        lines.extend(["", "[[checks]]", 'id = "test-integrity"', 'kind = "node.test-integrity"',
+                      'reuse = false', f"paths = {json.dumps(test_paths)}", '[checks.options]',
+                      f"base = {json.dumps(integrity_base)}"])
     lines.extend(["", "[harness]", "config_files = []", "rules = []", ""])
     return "\n".join(lines)
 

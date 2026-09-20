@@ -157,9 +157,13 @@ TS/JS 설정 등을 영수증 입력으로 기록합니다. 기본은 저장소 
 설치된 의존성과 환경까지 해시하는 것은 아니므로 생성된 명령은 `reuse = false`로
 매번 실행합니다. 실제 분석은 프로젝트의 기존 JS/TS 도구가 담당합니다.
 
-[p-limit 파일럿](docs/PILOT_NODE.md)에서 실제 JS 테스트·린트·TypeScript 선언
-검사를 확인했습니다. 테스트 하나를 삭제해도 모든 명령이 통과하는 한계도
-확인했습니다. 현재 Node 프로필은 테스트 삭제나 새 skip을 감지하지 않습니다.
+[p-limit 파일럿](docs/PILOT_NODE.md)에서 테스트 하나를 삭제해도 기존 명령은
+모두 통과하는 한계를 확인했습니다. 새 정책에는
+`exitzero init --profile node --test-integrity-base origin/main`을 쓰고, 기존
+정책에는 [`node.test-integrity`](docs/NODE_TEST_INTEGRITY.md)를 추가할 수 있습니다.
+문자열 이름이 명시된 JS/TS 테스트의 삭제와 새 skip·only 등을 비교합니다.
+JSX나 assertion의 의미까지 검증하지는 않습니다. CI에서는 독립적인 신뢰 기준
+커밋을 쓰고 검사할 테스트 경로를 확인하세요.
 
 ## 정책에 리뷰 요구사항 담기
 
