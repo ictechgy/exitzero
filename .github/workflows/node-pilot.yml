@@ -1,0 +1,80 @@
+name: Node repository pilot
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require the reviewed main branch
+        if: github.ref != 'refs/heads/main'
+        run: exit 1
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22.20.0'
+      - name: Check out the reviewed public source
+        uses: actions/checkout@v7
+        with:
+          repository: sindresorhus/p-limit
+          ref: a8a6fbec4e0e866d6d779b10889bb4f5567e70eb
+          path: .pilot-source
+          persist-credentials: false
+      - name: Prepare isolated public development dependencies
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import time
+          sys.path.insert(0, 'scripts')
+          from pilot_support import export
+          from pilot_node import PIN
+          base = Path(os.environ['RUNNER_TEMP']) / 'node-pilot'
+          base.mkdir()
+          prepared = base / 'dependencies'
+          export(Path('.pilot-source').resolve(), prepared, PIN)
+          for name in ('npm-user.conf', 'npm-global.conf'):
+              (base / name).write_text('')
+          env = {key: value for key, value in os.environ.items()
+                 if key in {'PATH', 'HOME', 'TMPDIR', 'LANG', 'LC_ALL'}}
+          env.update(NPM_CONFIG_USERCONFIG=str(base / 'npm-user.conf'),
+                     NPM_CONFIG_GLOBALCONFIG=str(base / 'npm-global.conf'),
+                     NPM_CONFIG_CACHE=str(base / 'npm-cache'),
+                     NPM_CONFIG_REGISTRY='https://registry.npmjs.org',
+                     NPM_CONFIG_UPDATE_NOTIFIER='false')
+          started = time.monotonic()
+          result = subprocess.run(['npm', 'install', '--ignore-scripts', '--no-audit',
+                                   '--no-fund', '--package-lock=true'], cwd=prepared,
+                                  env=env, capture_output=True, text=True, timeout=300)
+          evidence = Path('.exitzero/node-pilot-setup')
+          evidence.mkdir(parents=True)
+          (evidence / 'install.log').write_text(result.stdout + result.stderr)
+          (evidence / 'install.json').write_text(json.dumps({
+              'exit_code': result.returncode, 'duration_seconds': time.monotonic() - started}, indent=2))
+          raise SystemExit(result.returncode)
+          PY
+      - name: Verify baseline, independent mutations, CI dispatch and timings
+        run: python scripts/pilot_node.py --source .pilot-source --dependencies "$RUNNER_TEMP/node-pilot/dependencies"
+      - name: Preserve receipts and diagnostics on every outcome
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: node-pilot-${{ github.run_id }}-${{ github.run_attempt }}
+          include-hidden-files: true
+          if-no-files-found: error
+          path: |
+            .exitzero/node-pilot-setup/
+            .exitzero/pilots/node-*/*.json
+            .exitzero/pilots/node-*/*.log
+            .exitzero/pilots/node-*/*/exitzero.toml
+            .exitzero/pilots/node-*/*/.exitzero/runs/*.json

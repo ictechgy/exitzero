@@ -427,8 +427,9 @@ pinned real repository. It checks a passing baseline and four independent
 faults, including an empty test that the upstream test runner still accepts.
 Its runner preserves the original checkout and records all gate receipts.
 The [vecdiff pilot](docs/PILOT_VECDIFF.md) adds external NumPy dependencies
-and independent numeric review contracts. Both pilots use isolated source
-copies.
+and independent numeric review contracts. The [Node pilot](docs/PILOT_NODE.md)
+connects p-limit's real tests, lint and TypeScript declaration checks, including
+an explicit test-deletion blind spot. All pilots use isolated source copies.
 
 ## Trust and scope
 
