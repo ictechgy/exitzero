@@ -43,6 +43,8 @@ def mutate(case: Path, name: str) -> None:
         "deleted-test": ("test.js", "test('accepts additional arguments', async t => {\n"
                          "\tconst limit = pLimit(1);\n\tconst symbol = Symbol('test');\n\n"
                          "\tawait limit(a => t.is(a, symbol), symbol);\n});\n\n", ""),
+        "skipped-test": ("test.js", "test('accepts additional arguments',",
+                         "test.skip('accepts additional arguments',"),
         "agents-drift": ("AGENTS.md", "Policy SHA-256:", "Stale policy SHA-256:"),
     }
     if name == "baseline":
@@ -75,7 +77,7 @@ def gate(case: Path, args: list[str], log: Path, env: dict) -> dict:
     return result
 
 
-def run(source: Path, dependencies: Path) -> tuple[dict, Path]:
+def run(source: Path, dependencies: Path, integrity: bool = False) -> tuple[dict, Path]:
     before = tracked_state(source)
     if before["head"] != PIN:
         raise ValueError("Source HEAD differs from the reviewed pilot revision")
@@ -87,7 +89,8 @@ def run(source: Path, dependencies: Path) -> tuple[dict, Path]:
     artifact = safe_path(ROOT, f".exitzero/pilots/node-{stamp}-{uuid.uuid4().hex[:8]}")
     artifact.mkdir(parents=True)
     summary = {"schema_version": 1, "source_commit": PIN, "status": "failed", "cases": [],
-               "skips": [], "known_blind_spots": ["deleted-test"]}
+               "skips": [], "integrity_enabled": integrity,
+               "known_blind_spots": [] if integrity else ["deleted-test"]}
     env = {key: value for key, value in os.environ.items()
            if key in {"PATH", "HOME", "TMPDIR", "LANG", "LC_ALL", "SYSTEMROOT"}}
     for name in ("npm-user.conf", "npm-global.conf"):
@@ -95,7 +98,10 @@ def run(source: Path, dependencies: Path) -> tuple[dict, Path]:
     env.update(NPM_CONFIG_USERCONFIG=str(artifact / "npm-user.conf"),
                NPM_CONFIG_GLOBALCONFIG=str(artifact / "npm-global.conf"),
                NPM_CONFIG_CACHE=str(artifact / "npm-cache"), NPM_CONFIG_OFFLINE="true",
-               NPM_CONFIG_IGNORE_SCRIPTS="true", NPM_CONFIG_UPDATE_NOTIFIER="false", NO_COLOR="1")
+               NPM_CONFIG_IGNORE_SCRIPTS="true", NPM_CONFIG_UPDATE_NOTIFIER="false", NO_COLOR="1",
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_AUTHOR_NAME="exitzero pilot", GIT_AUTHOR_EMAIL="pilot@example.invalid",
+               GIT_COMMITTER_NAME="exitzero pilot", GIT_COMMITTER_EMAIL="pilot@example.invalid")
     try:
         template = artifact / "template"
         manifest = export(source, template, PIN)
@@ -132,10 +138,30 @@ def run(source: Path, dependencies: Path) -> tuple[dict, Path]:
         argv = [sys.executable, str(CLI), "--root", str(template), "init", "--profile", "node"]
         for check, command in COMMANDS.items():
             argv.extend(["--" + check, " ".join(command)])
+        if integrity:
+            # Seed a local baseline from the reviewed export; never commit in the source checkout.
+            for label, command in (
+                ("init", ["init", "--quiet"]),
+                ("add", ["add", "--", *manifest]),
+                ("commit", ["-c", "commit.gpgsign=false", "commit", "--quiet", "-m", "Pinned pilot baseline"]),
+            ):
+                result = execute(template, ["git", "-c", "core.hooksPath=" + os.devnull, *command],
+                                 artifact / f"baseline-git-{label}.log", env)
+                if result["exit_code"]:
+                    raise AssertionError("Could not seed the isolated Git baseline")
+            result = execute(template, ["git", "rev-parse", "HEAD"], artifact / "baseline-git-head.log", env)
+            if result["exit_code"]:
+                raise AssertionError("Could not identify the isolated Git baseline")
+            summary["baseline_commit"] = result["stdout"].strip()
+            argv.extend(["--test-integrity-base", summary["baseline_commit"]])
         summary["split_init"] = execute(template, argv, artifact / "split-init.log", env)
         if summary["split_init"]["exit_code"]:
             raise AssertionError("Split Node profile initialization failed")
-        for name, expected in CASES.items():
+        expectations = dict(CASES)
+        if integrity:
+            expectations["deleted-test"] = {"test-integrity"}
+            expectations["skipped-test"] = {"test-integrity", "lint-command"}
+        for name, expected in expectations.items():
             case = artifact / name
             shutil.copytree(template, case, symlinks=True,
                             ignore=shutil.ignore_patterns(".exitzero"))
@@ -152,7 +178,7 @@ def run(source: Path, dependencies: Path) -> tuple[dict, Path]:
                      and direct_failures == expected.intersection(COMMANDS)
                      and lint["exit_code"] == int(name == "agents-drift"))
             if "test-command" not in expected:
-                valid = valid and count == (29 if name == "deleted-test" else 30)
+                valid = valid and count == (29 if name in ("deleted-test", "skipped-test") else 30)
             summary["cases"].append({"name": name, "status": "passed" if valid else "failed",
                                      "expected_rules": sorted(expected), "test_count": count,
                                      "direct": direct, "check": check, "lint": lint})
@@ -205,8 +231,10 @@ def main() -> int:
     parser.add_argument("--source", type=Path, required=True, help="Pinned local p-limit checkout")
     parser.add_argument("--dependencies", type=Path, required=True,
                         help="Prepared directory containing node_modules and package-lock.json")
+    parser.add_argument("--integrity", action="store_true",
+                        help="Seed a local Git baseline and require test deletion/skip detection")
     args = parser.parse_args()
-    summary, output = run(args.source.resolve(), args.dependencies.resolve())
+    summary, output = run(args.source.resolve(), args.dependencies.resolve(), args.integrity)
     print(f"Pilot: {summary['status']}; source unchanged: {summary['source_unchanged']}")
     print("Evidence: " + output.relative_to(ROOT).as_posix())
     return 0 if summary["status"] == "passed" else 1

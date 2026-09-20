@@ -64,7 +64,7 @@ jobs:
           raise SystemExit(result.returncode)
           PY
       - name: Verify baseline, independent mutations, CI dispatch and timings
-        run: python scripts/pilot_node.py --source .pilot-source --dependencies "$RUNNER_TEMP/node-pilot/dependencies"
+        run: python scripts/pilot_node.py --source .pilot-source --dependencies "$RUNNER_TEMP/node-pilot/dependencies" --integrity
       - name: Preserve receipts and diagnostics on every outcome
         if: always()
         uses: actions/upload-artifact@v7

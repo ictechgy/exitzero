@@ -16,6 +16,11 @@ embedded `ensurepip`, installs only the selected wheel with `--no-index
 `check`, `lint-config`, `doctor`, `report`, both `verify` and `harness` plugin entry-point
 aliases, and equality between JSON output and saved receipts.
 
+It also generates a Node policy with a trusted Git baseline and verifies the
+installed static test-integrity check's baseline, deletion, skip and repair
+receipts. This packaging check uses a no-op command and requires no Node
+installation; the separate [Node pilot](PILOT_NODE.md) supplies real tool evidence.
+
 The runner also creates an isolated temporary Git repository and installs the
 wheel's pre-commit hook. It records an accepted commit, rejects syntactically
 invalid staged Python while keeping `HEAD` unchanged, and accepts the repaired

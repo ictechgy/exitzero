@@ -35,7 +35,7 @@ status must match before and after the run. Dependency directories are excluded
 from gate input hashes; the resolved lockfile and tool versions are retained
 separately. This is configuration isolation, not a process or network sandbox.
 
-## Independent cases
+## Original command-only cases (0.4.0)
 
 | Case | `check` | `lint-config` | Evidence |
 | --- | --- | --- | --- |
@@ -56,11 +56,10 @@ recorded test-deletion miss. It does not mean all injected defects were caught.
 
 Two valid cases without findings are limited observations, not an estimated
 false-positive rate. The Node profile delegates test quality to the configured
-tools: deleting a test can still pass. Python's `python.test-integrity` does not
-cover JavaScript. A useful follow-up is a separately reviewed JS/TS test-integrity
-check, starting with deleted tests and newly skipped tests.
+tools: deleting a test can still pass without an additional integrity check.
+The 0.5.0 follow-up below enables the new optional JS/TS check.
 
-## Recorded local run
+## Original local run
 
 On 2026-09-20, all eight declared outcomes and both CI-slot verdicts matched.
 The source checkout remained unchanged. The 22 persisted receipts matched the
@@ -80,7 +79,7 @@ between those medians was **0.181 seconds (3.8%)** on this machine. Individual
 gate-minus-direct differences ranged from 0.144 to 0.336 seconds. The randomized
 timers in upstream tests and this small sample limit performance conclusions.
 
-## Hosted verification
+## Original hosted verification
 
 [GitHub Actions run 35490667229](https://github.com/ictechgy/exitzero/actions/runs/35490667229)
 passed on Linux at exitzero commit `647e014574ce297dbdb2dc1960cc22caf401a101`.
@@ -96,8 +95,44 @@ times were **6.881/7.079 seconds**, a **0.198-second (2.9%)** difference across
 three pairs. These measurements describe separate environments.
 
 The ordinary [main CI run 35490640287](https://github.com/ictechgy/exitzero/actions/runs/35490640287)
-also passed Python 3.11/3.14 gates and installed-wheel/Git-hook checks. This pilot
-changes test tooling and documentation only; the published 0.4.0 runtime is unchanged.
+also passed Python 3.11/3.14 gates and installed-wheel/Git-hook checks. That commit
+changed test tooling and documentation only; its published 0.4.0 runtime was unchanged.
+
+## Follow-up with test integrity (0.5.0)
+
+Pass `--integrity` to the pilot runner to seed an isolated Git baseline from the
+pinned export and generate `node.test-integrity` against its immutable commit id.
+All Git commits happen in the disposable copies. The initial default Node profile
+is still checked separately, without integrity, to preserve the original onboarding
+control. The same runtime, lint and declaration commands remain enabled.
+
+This mode changes the deletion expectation to a failed gate and adds a skip case:
+
+| Case | Existing commands | Gate with integrity |
+| --- | --- | --- |
+| Existing argument-forwarding test deleted | AVA: 29 pass; XO/tsd: pass | Exit 1, `test-integrity` |
+| Existing argument-forwarding test changed to `test.skip` | AVA: 29 pass, 1 skip; XO: fail; tsd: pass | Exit 1, `test-integrity` and `lint-command` |
+
+The other seven original cases keep their expected verdicts. XO already catches
+the explicit skip in this project; deletion supplies the demonstrated additional
+protection. There are no baseline exclusions. The injected skip is intentional and
+its upstream output is preserved.
+
+The default lexical inventory recognizes 28 direct declarations here. The other
+two AVA tests use the conditional alias `testClearQueueRejects`, which is not in
+the default function-name list. Add aliases through the check's `functions` option
+when needed. This pilot does not claim to track all 30 runtime tests statically or
+prove that their retained assertions are meaningful. See the
+[supported forms and remaining limits](NODE_TEST_INTEGRITY.md).
+
+The final local 0.5.0 run on 2026-09-20 matched all nine declared outcomes and
+both CI-slot verdicts, preserved the source checkout and validated 24 receipts.
+Evidence: `.exitzero/pilots/node-20260920T060028Z-53785801/summary.json`.
+Its recorded runner/runtime hashes match the reviewed implementation. Tool
+versions match the original macOS run. Three alternating timing pairs gave
+direct/gate medians of **4.818/4.980 seconds**; the gate now includes the extra
+integrity check. Short runs and randomized upstream timers prevent treating the
+difference as a general performance estimate or comparing improvements across runs.
 
 ## Reproduce and inspect evidence
 
@@ -111,7 +146,7 @@ setting. No exitzero runtime dependency is added.
 ```sh
 python3 scripts/pilot_node.py \
   --source /path/to/pinned/p-limit \
-  --dependencies /path/to/prepared/p-limit
+  --dependencies /path/to/prepared/p-limit --integrity
 ```
 
 The dependency directory must contain `node_modules` and `package-lock.json`.
@@ -130,8 +165,9 @@ can resolve different versions; the recorded lock supports `npm ci` reproduction
 of that run. The runner records versions and checks behavior, but does not attest
 the installed dependency tree against the lockfile.
 
-The manual [Node pilot workflow](../.github/workflows/node-pilot.yml) uses the same
-runner on Linux, with the public source commit and Node version pinned. It retains
+Omit `--integrity` to reproduce the original command-only control. The manual
+[Node pilot workflow](../.github/workflows/node-pilot.yml) now enables integrity
+on Linux, with the public source commit and Node version pinned. It retains
 logs, lockfiles and receipts on failures as well as successes. It runs only on
 manual dispatch from main, uses read-only repository permissions, and does not
 modify p-limit, install IDE hooks or change branch protection. Its negative cases

@@ -336,6 +336,39 @@ def _validate_wheel(wheel: Path) -> dict[str, Any]:
     return {"path": str(wheel), "sha256": digest, "size": wheel.stat().st_size}
 
 
+def _verify_node_integrity(run: ReleaseRun, cli: Path, temporary: Path, env: dict[str, str]) -> dict[str, Any]:
+    """Prove the installed static check, without requiring Node or npm dependencies."""
+    repo = temporary / "node-repo"
+    repo.mkdir()
+    original = "test('kept', () => {});\ntest('removed', () => {});\n"
+    test = repo / "test.js"
+    test.write_text(original, encoding="utf-8")
+    try:
+        init = run.command("node-profile-init", [str(cli), "--root", str(repo), "init", "--profile", "node",
+                           "--test-command", '{python} -c "raise SystemExit(0)"',
+                           "--test-integrity-base", "HEAD"], repo, env)
+        if init.returncode:
+            raise ReleaseFailure("installed Node integrity initialization failed")
+        _git(run, repo, env, ["init", "-q"], "node-git-init")
+        _git(run, repo, env, ["add", "."], "node-git-add")
+        _commit(run, repo, env, "Node test baseline", "node-git-commit", 0)
+        cases = []
+        for label, source, expected in (
+            ("baseline", original, 0),
+            ("deletion", original.splitlines(keepends=True)[0], 1),
+            ("skip", original.replace("test('removed'", "test.skip('removed'"), 1),
+            ("repair", original, 0),
+        ):
+            test.write_text(source, encoding="utf-8")
+            receipt = _json_cli(run, cli, repo, env, ["check"], "node-integrity-" + label, expected)
+            if expected and {f["rule"] for f in receipt["findings"]} != {"test-integrity"}:
+                raise ReleaseFailure("installed Node integrity case failed for an unexpected reason")
+            cases.append({"name": label, "exit_code": expected, "run_id": receipt["run_id"]})
+        return {"name": "installed-node-test-integrity", "status": "passed", "cases": cases}
+    finally:
+        run.archive_receipts("node-integrity", repo)
+
+
 def run(wheel: Path) -> tuple[dict[str, Any], Path]:
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:10]
     artifact = _artifact_root(run_id)
@@ -427,6 +460,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
                 raise ReleaseFailure("repaired commit did not advance HEAD")
             if not release.receipts:
                 raise ReleaseFailure("no gate receipts were archived")
+            node_integrity = _verify_node_integrity(release, cli, temporary_root, env)
             summary["checks"] = [
                 {"name": "installed-cli-init", "status": "passed"},
                 {"name": "installed-check-receipt-equality", "status": "passed", "exit_code": check["exit_code"]},
@@ -439,6 +473,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
                  "head_unchanged": True, "hook_slot": invalid_receipt["hook_slot"], "finding": "syntax"},
                 {"name": "git-hook-repaired-commit", "status": "passed", "exit_code": repaired.returncode,
                  "hook_slot": repaired_receipt["hook_slot"]},
+                node_integrity,
             ]
             summary["status"] = "passed"
     except Exception as error:
