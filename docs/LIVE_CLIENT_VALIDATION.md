@@ -4,7 +4,8 @@ Run date: 2026-09-20. Claude Code and Gemini CLI model-driven repair loops remai
 **unverified** because the configured accounts rejected their live requests.
 The Gemini component test below verified a separate adapter fix. Subsequent
 Antigravity validation passed in interactive and headless modes. Devin CLI passed
-in an interactive sandbox with one approved fixture edit. These are separate
+in an interactive sandbox with one approved fixture edit. A protected OpenCode
+session also completed an advisory MCP repair loop with Qwen. These are separate
 client results.
 
 ## Actual CLI attempts
@@ -152,6 +153,61 @@ web and MCP calls were disallowed. Existing native login was used without
 inspecting or copying credential files. This bounded session is not a general
 Devin security assessment. Required CI remains the merge barrier.
 
+## Protected OpenCode follow-up
+
+OpenCode 1.18.31 with Qwen `qwen3.8-max` through the approved Alibaba Token Plan
+endpoint completed a real model-driven MCP repair loop using published exitzero
+0.5.1. The project was a synthetic Git repository with one seeded syntax error.
+The run used the operator's installed `safecode` protection engine (agentbelt),
+with a stricter test profile rather than the normal launcher's defaults.
+
+| Stage | Observed evidence |
+| --- | --- |
+| Initial MCP call | `exitzero-gate_check_completion` failed; receipt `f32b8dc47d96476fbbeaa777d2ce3693`, exit 1 |
+| Model repair | Read the source and failing receipt, then edit only `src/broken.py` |
+| Final MCP call | Same tool passed; receipt `10d9686b4f8f47fdb8491bf4b0d2f30c`, exit 0 |
+| Completion | Model read the passing receipt; native client exited 0 |
+
+Seven native tool operations completed in one session: two gate calls, four file
+reads and one edit. The repaired function returns 42. Policy and AGENTS hashes
+matched both receipts; the launcher also checked its configuration and Git
+controls for changes. The controller did not repair source or call the gate
+during the live session. All 21 runtime Python files matched source, published
+wheel and installed package.
+
+The macOS process sandbox limited filesystem access to the synthetic workspace,
+ephemeral client state and required runtime assets. The test omitted host Git
+identity, GitHub tokens, screenshot/status relays and development ports. Native
+tool permissions allowed only fixture/receipt reads, fixture edits and the one
+MCP gate. The package, policy and instructions were protected against writes.
+
+A local broker held the selected provider's API key outside the sandbox. The
+client received a temporary broker token, not the provider key. The broker pinned
+the model and API endpoint, rejected redirects and unauthenticated requests, and
+replaced workspace/home paths and the hostname in outbound JSON. All seven API
+requests passed checks for absence of the raw home path, hostname and provider
+key in their bodies. These are controls of this local test setup, not protection
+features shipped by exitzero or a privacy guarantee for arbitrary repositories.
+
+Before the live run, 18 synthetic boundary checks passed, including outside-file
+and symlink denials, child-process confinement, environment filtering, blocked
+Keychain/clipboard service lookup, and network restrictions. An actual OpenCode
+session against a local fake model also failed to read an outside canary; its
+contents never appeared in captured model requests. No real personal files were
+used as test data.
+
+Earlier attempts are retained separately. One could not reach the broker because
+direct loopback was blocked; clearing the proxy-bypass variables routed it through
+the permitted proxy. Another produced only a failed receipt before timing out
+on file-tool permissions. A local scripted-model reproduction passed after adding
+a synthetic Git root, with the same file allow rules. Only the final real-model
+run above is scored as successful.
+
+This integration uses advisory MCP, not a Stop hook or merge barrier. Zcode Safe
+and safekimi received isolated offline startup checks only; no live model result
+is claimed for them. The local Zcode aggregate doctor still reported a backend
+routing check requiring review, and its GUI was not launched.
+
 ## Retained evidence
 
 Local evidence is under `.exitzero/live-validation/claude-gemini/`:
@@ -174,3 +230,9 @@ Devin evidence is under `.exitzero/live-validation/devin-0.5.1/`: `summary.json`
 bounded drivers and the two incomplete headless attempts. Initial lint rejection
 of standalone `hooks.v1.json` is retained separately; the documented nested
 configuration passed lint.
+
+Protected OpenCode evidence is under `.exitzero/live-validation/safe-clients/`:
+`live-summary.json`, `live-verified.json`, two final `live-receipts/`, scrubbed
+native tool events, broker request hashes/statuses, boundary checks and separate
+offline/failed attempts. Broker and client state were temporary; provider keys
+and raw personal paths are not committed.

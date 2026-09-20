@@ -514,5 +514,12 @@ relaying the verdict correctly in headless mode:
   `opencode mcp list` shows `connected` and `opencode run` invoked
   `exitzero-gate_check_completion` with both verdicts observed.
 
-Neither host offers a blocking stop hook, so the gate stays advisory there:
-the verdict is real evidence only because the agent chose to call it.
+These MCP integrations stay advisory: the verdict is real evidence because the
+agent chose to call the gate; it does not enforce a required merge check.
+
+A protected OpenCode 1.18.31 session with Qwen and exitzero 0.5.1 also completed
+fail→receipt→agent repair→pass on 2026-09-20. The test used OS confinement and a
+credential broker, with MCP registered in the trusted launch configuration.
+If a protective launcher disables project configuration, register the server in
+its trusted configuration instead of weakening that isolation. See the
+[scoped validation and limitations](LIVE_CLIENT_VALIDATION.md#protected-opencode-follow-up).
