@@ -3,7 +3,7 @@
 - **v1 — core + verification + light harness:** TOML policy, generated AGENTS
   section, shared CLI/hook/CI runner, required JSON receipts, Python static checks,
   command-based review contracts, config lint, ten fixtures. Gateway and ledger
-  enhancement packages contain explicit unavailable stubs.
+  enhancement packages initially contained explicit unavailable stubs.
 - **v1.1 — deepen harness:** versioned fixture scoring for joint test and review
   constraints, additional rules/config formats, opt-in bounded multi-turn eval.
   Report failures and skipped scenarios separately from pass rates.
@@ -34,12 +34,12 @@ Before broad adoption: test real Cursor releases, improve Python import analysis
 add richer machine-output integrations, and measure check latency on larger repos.
 No claim of replacing full static analysis, human review or commercial review tools.
 
-## Post-0.3.0 source additions
+## 0.4.0 — setup and policy controls
 
 Implemented: project doctor, incident regression kits, check-level warn/block
 policy, Node command profiles, Copilot CLI and Git pre-push adapters, constrained
 MCP argument rules, exact receipt exports and optional CI attestation guidance.
-These remain source features until the next package release. Copilot has protocol
-tests but no live-session evidence; the attestation workflow is an example, not
+These ship in 0.4.0. Copilot has protocol tests but no live-session evidence;
+the attestation workflow is an example, not
 an enabled hosted signing deployment. Cloud control planes, generic shell-command
 inspection and automatic rollback remain outside this implementation.

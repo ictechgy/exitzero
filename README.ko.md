@@ -7,9 +7,9 @@
 
 exitzero는 저장소의 정책을 실행하는 작은 개발 도구입니다. 같은 TOML 정책으로
 로컬 CLI, Git 훅, CI를 검사하고 매번 JSON 실행 영수증을 남깁니다. 사용자는
-하나의 명령을 쓰고, 내부는 작은 코어와 플러그인으로 나뉩니다. 이 MVP는
-Python 코드와 에이전트 설정을 검사합니다. 명시적인 command 검사로는 어떤
-언어든 기존 도구를 그대로 실행할 수 있습니다.
+하나의 명령을 쓰고, 내부는 작은 코어와 플러그인으로 나뉩니다. 내장 검사는
+Python 코드와 에이전트 설정을 다룹니다. Node 프로필로 기존 테스트·린트·타입
+검사 명령을 연결하고, 다른 언어도 command 검사로 기존 도구를 실행할 수 있습니다.
 
 **Cursor stop은 수정 요청을 보내는 훅입니다. 머지 보호는 필수 CI로 설정하세요.**
 아래 실패 데모를 실행한 뒤 [필수 CI 설정](docs/HOOKS.md#required-ci-setup)을 연결하세요.
@@ -133,7 +133,7 @@ Python 프로필에서 생성된 command 검사는 영수증을 위해 Python �
 
 ## Node 저장소용 검사 생성
 
-소스 체크아웃에서 기존 `package.json`과 test 스크립트가 있는 프로젝트에 적용합니다:
+기존 `package.json`과 test 스크립트가 있는 프로젝트에 적용합니다:
 
 ```sh
 exitzero init --profile node
@@ -159,7 +159,7 @@ TS/JS 설정 등을 영수증 입력으로 기록합니다. 기본은 저장소 
 
 ## 정책에 리뷰 요구사항 담기
 
-소스 체크아웃에서는 사고를 정책에 연결된 회귀 검사 틀로 만들 수 있습니다:
+사고를 정책에 연결된 회귀 검사 틀로 만들 수 있습니다:
 
 ```sh
 exitzero plugin incident-kit --id negative-total \
@@ -235,7 +235,7 @@ test-quality 분석은 명백한 문제만 감지하므로 실제 테스트도 �
 
 ## 명령과 결과
 
-소스 체크아웃에서는 `[[checks]]`에 `enforcement = "warn"`을 추가하면
+`[[checks]]`에 `enforcement = "warn"`을 추가하면
 위반을 경고로 기록하며, 기본값은 `"block"`입니다. 검사가 실패했다는 사실은
 영수증의 `status: "failed"`로 유지하고 `blocking: false`를 별도로 기록합니다.
 따라서 종료 코드가 0이어도 경고로 처리한 검사 실패가 있을 수 있습니다.
@@ -306,14 +306,13 @@ exitzero plugin ledger-publish                                 # 실행 기록 �
 
 ## 로컬 훅과 CI
 
-소스 체크아웃에는 Copilot CLI `agentStop`과 Git `pre-push`도 있습니다.
+Copilot CLI `agentStop`과 Git `pre-push`도 지원합니다.
 pre-push는 커밋된 깨끗한 작업 트리를 검사하며 현재 HEAD와 다른 커밋의 푸시는
 거절합니다. Copilot은 프로토콜 테스트만 수행했고 호스트 타임아웃은 통과 처리될
 수 있습니다. [훅 계약](docs/HOOKS.md)과 [CI 서명·검증 예제](docs/ATTESTATIONS.md)를
 참고하세요. MCP 인자 규칙은 [플러그인 계약](docs/PLUGIN_API.md)에 설명되어 있습니다.
 
-`doctor`는 현재 소스 체크아웃 기능이며 PyPI 0.3.0에는 포함되지 않았습니다.
-다음 릴리스 전에는 소스 런처로 실행하세요.
+이 기능들은 exitzero 0.4.0 이상에서 사용할 수 있습니다.
 `exitzero doctor`는 검증 명령을 실행하지 않고 AGENTS와 프로젝트 훅 설정을
 진단합니다. 각 어댑터에 `configured`, `missing`, `unmanaged`, `misconfigured`,
 `unknown` 상태와 다음 조치를 표시하며, 재설치 후에도 꺼진 Cursor `failClosed`를

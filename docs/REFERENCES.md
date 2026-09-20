@@ -36,4 +36,5 @@ session and hosted GitHub Actions remain separate integration checks.
 
 Core owns policy parsing, hook dispatch, plugin discovery and receipt persistence.
 Plugins register their checks, linters, event handlers and CLI commands. The
-gateway and richer ledger packages stay as explicit stubs for the roadmap.
+gateway and ledger plugins are implemented; their optional integrations remain
+separate from core. See [the roadmap](../ROADMAP.md) for shipped stages.

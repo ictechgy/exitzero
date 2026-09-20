@@ -8,8 +8,9 @@ English | [한국어](README.ko.md)
 exitzero is a small developer tool that runs a repository's policy. The same
 TOML policy drives the local CLI, Git hooks, and CI, and every run leaves a
 JSON receipt. You use one command; inside, a small core and plugins do the
-work. This MVP checks Python code and agent configuration. Explicit command
-checks can run your existing tools for any language.
+work. Built-in checks cover Python code and agent configuration. The Node
+profile connects existing test, lint and type-check commands; explicit command
+checks can run your tools for other languages too.
 
 **Cursor stop requests a repair turn. Merge protection comes from required CI.**
 Start with the failure demo below, then follow [required CI setup](docs/HOOKS.md#required-ci-setup).
@@ -136,7 +137,7 @@ From a checkout, the included example exercises all four check types:
 
 ## Generate checks for a Node repository
 
-From this source checkout, run inside an existing Node project with a local
+Run inside an existing Node project with a local
 `package.json` and a test script:
 
 ```sh
@@ -168,7 +169,7 @@ is no bundled JavaScript parser or package manager.
 
 ## Put review requirements in the policy
 
-From this source checkout, turn a reported regression into a policy-linked kit:
+Turn a reported regression into a policy-linked kit:
 
 ```sh
 exitzero plugin incident-kit --id negative-total \
@@ -228,7 +229,7 @@ the section stays yours. Harness rules are documentation and conflict
 detection, not semantic enforcement: express exact messages, types and result
 ordering in executable tests. See [the sample](examples/sample).
 
-| Check | What v1 detects |
+| Check | What it detects |
 | --- | --- |
 | `python.syntax` | Python that cannot be parsed |
 | `python.imports` | Unresolved modules and missing statically declared local module symbols |
@@ -255,7 +256,7 @@ a stale pass after the base ref moves.
 
 ## Commands and outcomes
 
-In the source checkout, each check can declare `enforcement = "warn"` for
+Each check can declare `enforcement = "warn"` for
 advisory rollout (`"block"` is the default):
 
 ```toml
@@ -381,15 +382,14 @@ attestations.
 
 ## Local hooks and CI
 
-The source checkout also supports Copilot CLI `agentStop` and Git `pre-push`.
+exitzero also supports Copilot CLI `agentStop` and Git `pre-push`.
 Pre-push checks a clean committed tree and rejects pushed commits different from
 the checked-out HEAD; Copilot integration is protocol-tested and host timeouts
 can fail open. See [hook setup](docs/HOOKS.md) for both contracts. The
 [optional attestation recipe](docs/ATTESTATIONS.md) signs a fresh trusted CI
 receipt artifact and explains how to verify its provenance and require the job.
 
-`doctor` is available in this source checkout and is not included in PyPI 0.3.0;
-use the source launcher until the next release.
+These features require exitzero 0.4.0 or newer.
 Run `exitzero doctor` to diagnose AGENTS drift and project hook setup without
 executing verification commands. It reports `configured`, `missing`, `unmanaged`,
 `misconfigured` or `unknown`, with a next step for each adapter. It catches a

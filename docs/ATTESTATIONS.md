@@ -11,8 +11,8 @@ The example explicitly fails for fork PRs instead of skipping a required job.
 Give such changes a separate approved validation path; never switch to
 `pull_request_target` and execute untrusted patch code with write/OIDC permissions.
 Protect workflow, policy and test changes through review. Pin the gate release
-or a reviewed wheel that supports your policy; 0.3.0 does not understand the new
-`enforcement` field. Install the project's test tools before the gate step.
+or a reviewed wheel that supports your policy; the `enforcement` field requires
+0.4.0 or newer. Install the project's test tools before the gate step.
 
 After adapting the example, make `exitzero-attested` a required check for the
 target branch and test rejection on a deliberately failing PR. Review bypass

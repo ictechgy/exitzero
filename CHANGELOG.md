@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — released 2026-09-20
 
 - Review fixes: doctor rejects disabled project hooks; diff-scoped checks that
   did not execute cannot satisfy mapped requirements.
@@ -12,19 +12,15 @@
 - `report --run-id` selects an exact receipt. in-toto subject digests now cover
   the persisted file bytes (previously a canonical reserialization). Added an
   optional trusted-CI GitHub attestation recipe; no signing occurs locally.
-
 - `init --profile node` connects existing test/lint/type-check commands with
   JS/TS, manifests, lockfiles and configuration inputs. Generation is offline,
   preserves existing policy, and never installs packages or runs commands.
-
 - Per-check `enforcement = "warn" | "block"` separates observed failure from
   gate disposition. Receipts retain failed checks/requirements while marking
   advisory findings; execution, policy and receipt errors stay blocking.
-
 - `plugin incident-kit` scaffolds deliberately failing regression/neighboring
   tests and connects quality/command checks plus requirement mappings to the
   existing policy, preserving manual AGENTS guidance and existing files.
-
 - `doctor [--adapter NAME] [--format json]` diagnoses project policy/AGENTS
   drift and installed client/Git hook setup without running verification
   commands. It catches disabled Cursor `failClosed` after reinstall, invalid

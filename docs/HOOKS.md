@@ -5,7 +5,7 @@ source checkout in place, then run commands from the repository to be checked.
 
 ## Diagnose setup
 
-Doctor is available from the source checkout; PyPI 0.3.0 predates this command.
+Doctor requires exitzero 0.4.0 or newer.
 
 ```sh
 exitzero doctor
@@ -221,7 +221,7 @@ exitzero hooks install --adapter copilot
 exitzero doctor --adapter copilot
 ```
 
-The source adapter writes `.github/hooks/exitzero.json`, preserving foreign
+The adapter writes `.github/hooks/exitzero.json`, preserving foreign
 entries, with a version-1 `hooks.agentStop` executable entry (`exec`, `args`,
 `timeoutSec: 120`). This is the CLI executable contract, not a portable cloud
 agent deployment; reinstall after moving Python or the checkout.
@@ -331,7 +331,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
-      - run: python -m pip install exitzero==0.3.0
+      - run: python -m pip install exitzero==0.4.0
       # Install your project's test dependencies here, when needed.
       - name: Run the full gate on the proposed merge checkout
         run: exitzero check --format json
@@ -345,8 +345,7 @@ jobs:
           if-no-files-found: error
 ```
 
-This pins the published gate version; doctor is a source-checkout feature until
-the next release. Test the policy against the version pinned in your own CI.
+This pins the gate version. Test the policy against the version pinned in your own CI.
 For a Node or other project, install its existing tools before the gate too.
 Do not add `continue-on-error` or an `|| true` wrapper to the gate step.
 
