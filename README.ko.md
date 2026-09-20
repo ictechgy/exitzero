@@ -308,8 +308,9 @@ exitzero plugin ledger-publish                                 # 실행 기록 �
 
 Copilot CLI `agentStop`과 Git `pre-push`도 지원합니다.
 pre-push는 커밋된 깨끗한 작업 트리를 검사하며 현재 HEAD와 다른 커밋의 푸시는
-거절합니다. Copilot은 프로토콜 테스트만 수행했고 호스트 타임아웃은 통과 처리될
-수 있습니다. [훅 계약](docs/HOOKS.md)과 [CI 서명·검증 예제](docs/ATTESTATIONS.md)를
+거절합니다. Copilot CLI 1.0.86은 `-p`에서 저장소 훅 로딩을 명시적으로 켠 뒤
+실패→수정→통과를 실세션으로 확인했습니다. 호스트 타임아웃은 통과 처리될 수
+있습니다. [훅 계약](docs/HOOKS.md)과 [CI 서명·검증 예제](docs/ATTESTATIONS.md)를
 참고하세요. MCP 인자 규칙은 [플러그인 계약](docs/PLUGIN_API.md)에 설명되어 있습니다.
 
 이 기능들은 exitzero 0.4.0 이상에서 사용할 수 있습니다.

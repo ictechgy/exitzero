@@ -39,7 +39,7 @@ No claim of replacing full static analysis, human review or commercial review to
 Implemented: project doctor, incident regression kits, check-level warn/block
 policy, Node command profiles, Copilot CLI and Git pre-push adapters, constrained
 MCP argument rules, exact receipt exports and optional CI attestation guidance.
-These ship in 0.4.0. Copilot has protocol tests but no live-session evidence;
-the attestation workflow is an example, not
-an enabled hosted signing deployment. Cloud control planes, generic shell-command
+These ship in 0.4.0. Copilot CLI 1.0.86 has live prompt-mode evidence with explicit
+repository hook loading. A manual main-branch workflow validates gate receipt
+attestations; the portable PR recipe remains opt-in. Cloud control planes, generic shell-command
 inspection and automatic rollback remain outside this implementation.

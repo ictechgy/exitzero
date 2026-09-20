@@ -232,10 +232,26 @@ Manual `hooks run --adapter copilot --event preToolUse` integration emits a deny
 on failure and `{}` on pass to retain normal host permission decisions.
 
 Copilot host timeouts fail open and its stop loop has a continuation limit.
-Project trust and effective user/managed settings also matter. Require CI for
-merge protection; doctor does not establish runtime invocation. Tested against
-local protocol fixtures, not a live Copilot session. Contract source:
+Project trust and effective user/managed settings also matter. In prompt mode
+(`-p`), an untrusted repository's hooks are not loaded by default. After reviewing
+the commands, set `GITHUB_COPILOT_PROMPT_MODE_REPO_HOOKS=true` for that invocation,
+or establish folder trust interactively. This controls hook loading separately
+from tool permissions; the `--allow-all-tools` flag alone did not load the hooks
+in the fresh profile used for our test. Do not enable repository hooks blindly.
+Require CI for merge protection; doctor does not establish runtime invocation.
+Contract sources:
 [official hooks reference](https://docs.github.com/en/copilot/reference/hooks-reference).
+The prompt-mode switch is documented in the
+[CLI environment reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference).
+
+Live verification on 2026-09-20 used Copilot CLI 1.0.86 in prompt mode and the
+published exitzero 0.4.0 wheel in an isolated Python repair fixture. With the
+explicit hook-loading switch, the installed `agentStop` hook produced a failing
+PostToolUse receipt; the agent repaired the syntax error and the next stop
+produced a passing receipt. A separate observer saw both stops, the final code
+matched the expected repair, and policy/AGENTS/hook files remained unchanged.
+Without the switch in the fresh profile, the model answered but no hook ran.
+This establishes the tested version/mode, not universal host compatibility.
 
 ## Git pre-commit
 

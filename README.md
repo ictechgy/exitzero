@@ -384,8 +384,9 @@ attestations.
 
 exitzero also supports Copilot CLI `agentStop` and Git `pre-push`.
 Pre-push checks a clean committed tree and rejects pushed commits different from
-the checked-out HEAD; Copilot integration is protocol-tested and host timeouts
-can fail open. See [hook setup](docs/HOOKS.md) for both contracts. The
+the checked-out HEAD. Copilot CLI 1.0.86 was live-verified with explicit repository
+hook loading in prompt mode; host timeouts can still fail open. See
+[hook setup](docs/HOOKS.md) for both contracts. The
 [optional attestation recipe](docs/ATTESTATIONS.md) signs a fresh trusted CI
 receipt artifact and explains how to verify its provenance and require the job.
 
