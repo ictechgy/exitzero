@@ -35,10 +35,11 @@ ADAPTER_EVENTS = {
 # Hook runtimes read these entry fields; failClosed keeps hook failures from
 # proceeding silently, and timeout bounds a hung gate command.
 HOOK_TIMEOUT_SECONDS = 120
+LEGACY_GEMINI_TIMEOUT_MS = 120
 HOOK_MANAGED_NOTE = {
     "claude": "Approve or trust the project hook on the next Claude Code session; managed allowManagedHooksOnly policies can disable project hooks entirely.",
     "codex": "Codex gates hooks behind trust review; run /hooks or approve the hook prompt before the stop gate can fire.",
-    "gemini": "Gemini reads project hooks from .gemini/settings.json without a trust prompt; review the file before the next session.",
+    "gemini": "Review and trust the project hook in Gemini CLI when prompted. Hook timeouts use milliseconds; require CI for merge protection.",
     "agy": "Antigravity reads project hooks from .agents/hooks.json; commands run synchronously and block the agent loop.",
     "cursor": "",
     "copilot": "Copilot CLI only: trust the project hook. Host timeouts fail open; require CI for merge protection.",
@@ -139,9 +140,10 @@ def _entry_digest(entry: dict) -> str:
     return hashlib.sha256(json.dumps(entry, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def _settings_hook_entry(command: str) -> dict:
-    """Nested Claude Code/Codex Stop entry used by the shared settings shape."""
-    return {"hooks": [{"type": "command", "command": command, "timeout": HOOK_TIMEOUT_SECONDS}]}
+def _settings_hook_entry(command: str, adapter: str) -> dict:
+    """Nested stop entry using the host's timeout unit."""
+    timeout = HOOK_TIMEOUT_SECONDS * 1000 if adapter == "gemini" else HOOK_TIMEOUT_SECONDS
+    return {"hooks": [{"type": "command", "command": command, "timeout": timeout}]}
 
 
 def _exitzero_managed(adapter: str, command: object) -> bool:
@@ -180,12 +182,16 @@ def _merge_settings_hooks(data: dict, command: str, adapter: str, event: str = "
         for entry in entries:
             if isinstance(entry, dict) and entry.get("command") == command:
                 owned = group
+                if adapter == "gemini" and entry.get("timeout") == LEGACY_GEMINI_TIMEOUT_MS:
+                    # Migrate the pre-0.5.1 seconds-as-milliseconds default;
+                    # retain deliberately configured budgets and foreign hooks.
+                    entry["timeout"] = HOOK_TIMEOUT_SECONDS * 1000
     # Only groups emptied by our own pruning are removed — a foreign group
     # that was already empty is user data, not ours to delete.
     groups[:] = [group for index, group in enumerate(groups)
                  if group["hooks"] or index not in emptied_by_pruning]
     if owned is None:
-        groups.append(_settings_hook_entry(command))
+        groups.append(_settings_hook_entry(command, adapter))
     return data
 
 

@@ -7,7 +7,7 @@ import subprocess
 
 from .api import Context, Finding
 from .files import safe_path
-from .hooks import (AGY_HOOK_NAME, SETTINGS_ADAPTERS, _manifest,
+from .hooks import (AGY_HOOK_NAME, HOOK_TIMEOUT_SECONDS, LEGACY_GEMINI_TIMEOUT_MS, SETTINGS_ADAPTERS, _manifest,
                     expected_adapter_command, expected_copilot_entry, expected_git_hook, lint_installed)
 
 ADAPTER_PATHS = {
@@ -133,6 +133,10 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
                     timeout = entry.get("timeoutSec") if adapter == "copilot" else entry.get("timeout")
                     if (type(timeout) not in (int, float) or not math.isfinite(timeout) or timeout <= 0):
                         item.update(state="misconfigured", detail="The gate hook needs a positive finite timeout.")
+                        findings.append(Finding("doctor.hook-timeout", item["detail"], relative))
+                    elif adapter == "gemini" and timeout == LEGACY_GEMINI_TIMEOUT_MS:
+                        item.update(state="misconfigured", detail="The legacy Gemini hook budget is only 120 milliseconds.",
+                                    next_step=f"Run exitzero hooks install --adapter gemini to migrate to {HOOK_TIMEOUT_SECONDS * 1000} milliseconds, then rerun doctor.")
                         findings.append(Finding("doctor.hook-timeout", item["detail"], relative))
                     if adapter == "cursor":
                         if entry.get("failClosed") is not True:

@@ -314,6 +314,12 @@ exitzero plugin ledger-publish                                 # 실행 기록 �
 
 ## 로컬 훅과 CI
 
+Gemini 사용자는 0.5.1 이상으로 업그레이드한 뒤
+`exitzero hooks install --adapter gemini`를 다시 실행하세요.
+이전의 120밀리초 제한을 의도한 120초(120000밀리초)로 바꿉니다.
+`doctor --adapter gemini`가 기존 값을 진단합니다. 실제 훅 실행기 검증과
+계정 제약으로 막힌 Claude/Gemini 세션은 [검증 기록](docs/LIVE_CLIENT_VALIDATION.md)에 남겼습니다.
+
 Copilot CLI `agentStop`과 Git `pre-push`도 지원합니다.
 pre-push는 커밋된 깨끗한 작업 트리를 검사하며 현재 HEAD와 다른 커밋의 푸시는
 거절합니다. Copilot CLI 1.0.86은 `-p`에서 저장소 훅 로딩을 명시적으로 켠 뒤

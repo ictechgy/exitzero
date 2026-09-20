@@ -144,9 +144,10 @@ repeat feedback. Gate violations exit 0 with the JSON decision; operational or
 invalid-input errors exit 2 and still persist a receipt.
 
 Claude Code may ask to approve the project hook on the next session before it
-fires; managed policies can disable project hooks entirely. Live Claude Code
-verification has not been performed — protocol behavior is covered by tests
-only.
+fires; managed policies can disable project hooks entirely. A live attempt on
+Claude Code 2.1.278 (2026-09-20) ended with the validation account's weekly-limit
+HTTP 429 before a model response or Stop invocation. No live repair loop has
+been verified; see the [attempt and component evidence](LIVE_CLIENT_VALIDATION.md).
 
 ## Codex
 
@@ -169,7 +170,7 @@ and stopped again into a passing gate — the same repair loop as the Cursor
 adapter. Unlike Cursor's `-p`, Codex's non-interactive mode honors stop hooks,
 but trust review applies: persist trust in an interactive session first, or
 pass `--dangerously-bypass-hook-trust` for automation that vets its hook
-sources. Live Claude Code verification has not been performed.
+sources. Claude's separate live attempt remains quota-blocked.
 
 ## Gemini CLI
 
@@ -182,13 +183,34 @@ Gemini CLI uses the same nested hook list shape, stored in shared
 `.gemini/settings.json` under the `AfterAgent` event (its Stop equivalent),
 so drift is tracked per managed entry like Claude's file. The stdin/stdout
 contract is also identical: `{"decision": "block", "reason": ...}` on
-failure, `{}` on pass, exit 2 for operational errors. Gemini reads project
-hooks without a trust prompt — review `.gemini/settings.json` before the
-next session. `gemini hooks migrate --from-claude` maps `Stop` to
-`AfterAgent`, matching this adapter's layout. Protocol behavior is covered
-by tests only — a live session could not be run because the installed
-gemini-cli 0.x build rejects this account tier (IneligibleTierError points
-at Antigravity instead).
+failure, `{}` on pass, exit 2 for operational errors. Gemini accepts `block` as
+an alias for its canonical `deny` decision. Review `.gemini/settings.json` and
+complete Gemini's workspace/hook trust flow when prompted. Changed project hook
+commands may require renewed trust. `gemini hooks migrate --from-claude` maps
+`Stop` to `AfterAgent`, matching this adapter's layout.
+
+Starting in 0.5.1, the installer writes `timeout: 120000`: Gemini interprets this
+field in **milliseconds**, giving the intended 120-second budget. Earlier
+exitzero versions incorrectly wrote `120` (120 milliseconds), which can time out
+before gate feedback arrives. After upgrading, migrate an existing installation:
+
+```sh
+exitzero hooks install --adapter gemini
+exitzero doctor --adapter gemini
+```
+
+Reinstallation upgrades the legacy 120 value, updates the managed fingerprint
+and preserves unrelated settings/hooks and other custom timeout values. Doctor
+flags the legacy budget even when its old fingerprint still matches. This does
+not make host timeouts a merge barrier; keep required CI checks.
+
+The Gemini CLI 0.44.1 live retry (2026-09-20) ended before model execution with
+`IneligibleTierError` / `UNSUPPORTED_CLIENT` for the validation account. Its
+installed native HookRunner was separately tested without model calls: the old
+budget timed out, and the corrected installed hook returned block→pass with
+persisted receipts. This is component evidence; the live model repair loop
+remains unverified. See [the validation record](LIVE_CLIENT_VALIDATION.md) and
+[Gemini's hook specification](https://geminicli.com/docs/hooks/reference/).
 
 ## Antigravity (agy)
 

@@ -98,6 +98,46 @@ class DoctorTests(unittest.TestCase):
                 receipt = self.doctor("--adapter", adapter)
                 self.assertEqual(self.row(receipt, adapter)["state"], "configured")
 
+    def test_legacy_gemini_timeout_is_diagnosed_and_reinstall_migrates_it(self):
+        from exitzero.hooks import _entry_digest
+
+        self.cli("hooks", "install", "--adapter", "gemini")
+        path = self.root / ".gemini/settings.json"
+        data = json.loads(path.read_text())
+        entry = data["hooks"]["AfterAgent"][0]["hooks"][0]
+        entry["timeout"] = 120
+        foreign = {"type": "command", "command": "echo foreign", "timeout": 5000}
+        data["hooks"]["AfterAgent"].append({"hooks": [foreign]})
+        data["theme"] = "preserve-me"
+        path.write_text(json.dumps(data))
+        manifest_path = self.root / ".exitzero/hooks.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["entries"][".gemini/settings.json"] = _entry_digest(entry)
+        manifest_path.write_text(json.dumps(manifest))
+        # Simulate a valid old installation, rather than mere manifest drift.
+        self.cli("lint-config")
+        receipt = self.doctor("--adapter", "gemini", expected=1)
+        self.assertEqual({f["rule"] for f in receipt["findings"]}, {"doctor.hook-timeout", "doctor.required-adapter"})
+        self.assertIn("120000", self.row(receipt, "gemini")["next_step"])
+        self.cli("hooks", "install", "--adapter", "gemini")
+        migrated = json.loads(path.read_text())
+        self.assertEqual(migrated["hooks"]["AfterAgent"][0]["hooks"][0]["timeout"], 120_000)
+        self.assertEqual(migrated["hooks"]["AfterAgent"][1]["hooks"][0], foreign)
+        self.assertEqual(migrated["theme"], "preserve-me")
+        self.doctor("--adapter", "gemini")
+        self.cli("hooks", "install", "--adapter", "gemini")
+        self.assertEqual(json.loads(path.read_text()), migrated)
+
+    def test_gemini_reinstall_preserves_a_custom_millisecond_budget(self):
+        self.cli("hooks", "install", "--adapter", "gemini")
+        path = self.root / ".gemini/settings.json"
+        data = json.loads(path.read_text())
+        data["hooks"]["AfterAgent"][0]["hooks"][0]["timeout"] = 30000
+        path.write_text(json.dumps(data))
+        self.cli("hooks", "install", "--adapter", "gemini")
+        self.assertEqual(json.loads(path.read_text())["hooks"]["AfterAgent"][0]["hooks"][0]["timeout"], 30000)
+        self.doctor("--adapter", "gemini")
+
     def test_managed_only_is_error_for_installed_project_hook(self):
         self.cli("hooks", "install", "--adapter", "claude")
         path = self.root / ".claude/settings.json"

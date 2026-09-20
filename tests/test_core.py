@@ -997,7 +997,7 @@ class AdapterHookTests(unittest.TestCase):
         self.assertEqual(len(entries), 1)
         entry = entries[0]
         self.assertEqual(entry["type"], "command")
-        self.assertEqual(entry["timeout"], 120)
+        self.assertEqual(entry["timeout"], 120_000)
         self.assertIn("hooks run --adapter gemini --event stop", entry["command"])
         manifest = json.loads((self.root / ".exitzero/hooks.json").read_text(encoding="utf-8"))
         self.assertIn(".gemini/settings.json", manifest["entries"])

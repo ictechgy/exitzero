@@ -391,6 +391,13 @@ attestations.
 
 ## Local hooks and CI
 
+Gemini users upgrading from 0.5.0 or earlier should rerun
+`exitzero hooks install --adapter gemini` after installing 0.5.1 or newer.
+This corrects the legacy 120-millisecond hook budget to 120000 milliseconds;
+`doctor --adapter gemini` detects installations still using the old value.
+See the [validation record](docs/LIVE_CLIENT_VALIDATION.md) for the native executor
+test and account-blocked Claude/Gemini live attempts.
+
 exitzero also supports Copilot CLI `agentStop` and Git `pre-push`.
 Pre-push checks a clean committed tree and rejects pushed commits different from
 the checked-out HEAD. Copilot CLI 1.0.86 was live-verified with explicit repository

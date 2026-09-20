@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.1 — released 2026-09-20
+
+- Fix Gemini hook timeouts to use milliseconds: new installations receive
+  `120000` (120 seconds), and reinstalling migrates the legacy `120` value while
+  preserving other custom budgets and unrelated hooks/settings. Doctor flags the
+  old budget even when its stored fingerprint matches.
+- Update Gemini trust guidance and record current Claude/Gemini live account
+  blockers separately from verified native Gemini command-hook execution.
+
 ## 0.5.0 — released 2026-09-20
 
 - Opt-in `node.test-integrity` detects removed literal-named JS/TS tests and new
