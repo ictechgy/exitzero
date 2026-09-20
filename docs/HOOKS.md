@@ -523,3 +523,10 @@ credential broker, with MCP registered in the trusted launch configuration.
 If a protective launcher disables project configuration, register the server in
 its trusted configuration instead of weakening that isolation. See the
 [scoped validation and limitations](LIVE_CLIENT_VALIDATION.md#protected-opencode-follow-up).
+
+The protected Zcode 0.16.5 backend also completed a real GLM-driven MCP repair
+loop through native `app-server --stdio`; its GUI and one-shot CLI are different
+surfaces and were not scored as successful by that result. Kimi Code 0.43.1 has
+an offline scripted-model MCP control, with its real-model run still pending
+isolated login. These are manual MCP integrations; 0.5.1 has no `zcode` or `kimi`
+hook installer. See the [separate client evidence](LIVE_CLIENT_VALIDATION.md#protected-zcode-backend-follow-up).

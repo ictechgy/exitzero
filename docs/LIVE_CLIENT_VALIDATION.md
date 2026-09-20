@@ -4,9 +4,10 @@ Run date: 2026-09-20. Claude Code and Gemini CLI model-driven repair loops remai
 **unverified** because the configured accounts rejected their live requests.
 The Gemini component test below verified a separate adapter fix. Subsequent
 Antigravity validation passed in interactive and headless modes. Devin CLI passed
-in an interactive sandbox with one approved fixture edit. A protected OpenCode
-session also completed an advisory MCP repair loop with Qwen. These are separate
-client results.
+in an interactive sandbox with one approved fixture edit. Protected OpenCode and
+Zcode backend sessions also completed advisory MCP repair loops with Qwen and
+GLM respectively. Kimi has an offline native-client control only; its real-model
+run awaits an isolated login. These are separate client results.
 
 ## Actual CLI attempts
 
@@ -203,10 +204,69 @@ on file-tool permissions. A local scripted-model reproduction passed after addin
 a synthetic Git root, with the same file allow rules. Only the final real-model
 run above is scored as successful.
 
-This integration uses advisory MCP, not a Stop hook or merge barrier. Zcode Safe
-and safekimi received isolated offline startup checks only; no live model result
-is claimed for them. The local Zcode aggregate doctor still reported a backend
-routing check requiring review, and its GUI was not launched.
+This integration uses advisory MCP, not a Stop hook or merge barrier. Subsequent
+Zcode and Kimi work is recorded separately below.
+
+## Protected Zcode backend follow-up
+
+The verified Zcode CLI 0.16.5 bundled with desktop 3.12.3 completed a real MCP
+repair loop with `glm-5.3-flash` through the approved Z.ai Coding Plan endpoint.
+The test used published exitzero 0.5.1, a synthetic Git workspace and the installed
+Zcode Safe protection engine under a stricter task profile. It launched the native
+`app-server --stdio` backend with a terminal presentation surface; no GUI ran.
+
+| Stage | Observed evidence |
+| --- | --- |
+| Initial gate | Receipt `74c9945e04334743b39e8a01c142ea90`, exit 1; seeded syntax error |
+| Model action | Read that receipt and `src/broken.py`, then edit only the fixture |
+| Final gate | Receipt `5f73f2f5e68a4855abb08d85fa7d7663`, exit 0; `answer()` returns 42 |
+
+Five native tool operations completed in one session, each observed by both
+PreToolUse and PostToolUse hooks. The protocol controller could answer scoped
+permission requests, but none required its approval in the successful run:
+the configured native guards allowed the five authorized operations. The backend
+and controller exited 0. Five real model API calls completed in 29.279 seconds.
+The controller never repaired source or invoked the gate during the model session.
+
+The selected API key stayed in the authenticated, endpoint-pinned local broker
+outside the sandbox. Request bodies were checked after workspace/home/hostname
+redaction. Native tools were limited to Read, Edit, Write and the one MCP gate;
+file guards restricted access to the fixture and receipts. Protected policy and
+instruction hashes matched both receipts, and all 21 runtime files matched source,
+wheel and installed package. Private runtime sockets were allowed only in owned
+temporary directories; a live unrelated host-socket negative control remained
+blocked. This is bounded backend evidence, not GUI privacy certification.
+
+Setup controls found client-specific constraints. In the restricted one-shot
+setup, the CLI advertised flags its parser rejected, walked upward for dotenv
+files, and denied the gate with `No permission client configured`. The final
+app-server route avoids that dotenv startup path
+and supplies the protocol client; it does not use the exploratory dotenv shim
+or disable permission checks. The installed guard's aggregate doctor still checks
+the old `out/host/index.js` location: the routing code now resides in a directly
+imported `chunk-OIOBEZTZ.js`. Its override logic and matching binary hashes were
+inspected; the global checker and launcher were not modified.
+
+## Kimi offline preparation
+
+Kimi Code 0.43.1 ran in a separate, credential-free safekimi engine profile against
+a local scripted model. Native MCP calls produced exit 1 receipt
+`6fc0972a8c2c46fab15fd9b1383bc616`, then exit 0 receipt
+`cd86fbd104614aabadf9208c7d950163` after the scripted response requested a fixture
+write. All five native calls returned results, and source/policy hashes matched
+the saved receipts. This is component evidence, not a real-model repair result.
+
+Only Read, Write and the completion gate were exposed. Four PreToolUse records
+covered the three file operations and final gate; the initial gate had no hook
+observation. Complete hook coverage is therefore not established. Native permission
+rules and OS confinement remain separate controls. The hook mechanism itself is
+[documented as fail-open on errors or timeouts](https://moonshotai.github.io/kimi-code/en/customization/hooks).
+
+The local control allowed one newly created, authenticated broker port, with no
+public API domains allowed. A positive/negative socket control confirmed that
+the broker was reachable and an unrelated live host service remained blocked.
+The original Kimi credentials were not copied. A separate isolated login profile
+is ready, but its real-model validation awaits the operator's native login.
 
 ## Retained evidence
 
@@ -236,3 +296,9 @@ Protected OpenCode evidence is under `.exitzero/live-validation/safe-clients/`:
 native tool events, broker request hashes/statuses, boundary checks and separate
 offline/failed attempts. Broker and client state were temporary; provider keys
 and raw personal paths are not committed.
+
+Zcode and Kimi follow-up evidence is under `.exitzero/live-validation/safe-tail/`:
+Zcode `live-summary.json`, `live-verified.json`, two live receipts, native hooks
+and broker records; Kimi `kimi-offline/verified.json`, native streams, two component
+receipts and its broker-port control. Failed setup attempts are separate from the
+final results. The pending Kimi login workspace is retained for continuation.
