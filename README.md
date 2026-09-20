@@ -167,6 +167,10 @@ dependencies and environment are not fingerprinted. Generated Node commands use
 `reuse = false` and run afresh. Existing project tools own JS/TS analysis; there
 is no bundled JavaScript parser or package manager.
 
+The [p-limit pilot](docs/PILOT_NODE.md) verifies real JS tests, lint and TypeScript
+declarations. It also records a limit: deleting a test can leave every command
+passing. The Node profile does not currently detect deleted or newly skipped tests.
+
 ## Put review requirements in the policy
 
 Turn a reported regression into a policy-linked kit:

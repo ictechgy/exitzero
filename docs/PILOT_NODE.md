@@ -80,6 +80,25 @@ between those medians was **0.181 seconds (3.8%)** on this machine. Individual
 gate-minus-direct differences ranged from 0.144 to 0.336 seconds. The randomized
 timers in upstream tests and this small sample limit performance conclusions.
 
+## Hosted verification
+
+[GitHub Actions run 35490667229](https://github.com/ictechgy/exitzero/actions/runs/35490667229)
+passed on Linux at exitzero commit `647e014574ce297dbdb2dc1960cc22caf401a101`.
+All eight cases and both CI-slot verdicts matched, including the test-deletion
+miss. The downloaded artifact's 22 persisted receipts were independently checked
+against the recorded exits and output; the runner/core hashes matched the local
+checkout and the source-preservation check passed.
+
+The workflow used Python 3.11 and Node 22.20.0 with its bundled npm 10.9.3. AVA,
+XO, tsd, TypeScript and yocto-queue resolved to the same versions as the local
+run; the separate Linux lockfile is retained in the artifact. Median direct/gate
+times were **6.881/7.079 seconds**, a **0.198-second (2.9%)** difference across
+three pairs. These measurements describe separate environments.
+
+The ordinary [main CI run 35490640287](https://github.com/ictechgy/exitzero/actions/runs/35490640287)
+also passed Python 3.11/3.14 gates and installed-wheel/Git-hook checks. This pilot
+changes test tooling and documentation only; the published 0.4.0 runtime is unchanged.
+
 ## Reproduce and inspect evidence
 
 Use Node 22.20.0, npm 11.6.2 and Python 3.11+. Prepare the reviewed public checkout
