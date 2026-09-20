@@ -1,10 +1,11 @@
 # Live client validation
 
-Run date: 2026-09-20. The full model-driven repair loops remain **unverified**
-because both configured accounts rejected their live requests. The Gemini
-component test below found and verified a separate adapter fix. The subsequent
-Antigravity validation passed in interactive and headless modes; it is a separate
-client result.
+Run date: 2026-09-20. Claude Code and Gemini CLI model-driven repair loops remain
+**unverified** because the configured accounts rejected their live requests.
+The Gemini component test below verified a separate adapter fix. Subsequent
+Antigravity validation passed in interactive and headless modes. Devin CLI passed
+in an interactive sandbox with one approved fixture edit. These are separate
+client results.
 
 ## Actual CLI attempts
 
@@ -70,8 +71,9 @@ Native behavior was checked against the installed implementation and the officia
 
 The user offered Antigravity as an available alternative and flagged security
 concerns about other clients. Only Antigravity was used for this follow-up;
-OpenCode, Kimi, Zcode and Devin were not run. Validation used synthetic temporary
-projects and the published exitzero 0.5.1 wheel, not the implementation repository.
+OpenCode, Kimi, Zcode and Devin were not run during that stage. Validation used
+synthetic temporary projects and the published exitzero 0.5.1 wheel, not the
+implementation repository.
 
 Antigravity CLI 1.2.7 with `gemini-3.8-flash-low` completed the real model-driven
 loop in both modes:
@@ -107,6 +109,49 @@ never executes hooks in `-p` mode. Project selection was explicit in both new
 runs; this does not establish why every earlier attempt failed. It also does not
 resolve the separate Claude Code and Gemini CLI account blockers.
 
+## Devin CLI follow-up
+
+The user subsequently authorized Devin. Devin CLI 3000.10.31 (`b98cc431`) with
+`gemini-3-8-flash-low` ran locally against a synthetic temporary project and the
+published exitzero 0.5.1 wheel. No cloud task or repository handoff was created.
+Project `.devin/config.json` contained a native Stop hook calling
+`exitzero hooks run --adapter claude --event stop`. This reuses the compatible
+JSON protocol; it is not a dedicated Devin adapter or Claude Code live evidence.
+
+The interactive `--sandbox` session completed the real repair loop:
+
+| Stage | Observed evidence |
+| --- | --- |
+| Initial stop | Receipt `4dcd044d5e3045ec8ab090ada9447dfd`, exit 1; seeded syntax error only |
+| Agent repair | Read the exact receipt and `src/broken.py`, then propose `def answer(:` → `def answer():` |
+| Edit approval | Controller reviewed the displayed one-file diff and chose **Approve once** |
+| Final stop | Receipt `23a56de755f94912b1f4da446eb1f13b`, exit 0; `answer()` returns 42 |
+
+Two Stop observations and three scoped tool callbacks belonged to the same
+session. Policy, AGENTS, project hooks, scope guard and initialized test config
+hashes were unchanged. Receipt input hashes matched the broken and repaired
+source. The controller never edited the source or invoked the gate during the
+session; it closed the completed interactive client after collecting both
+receipts, with client exit 0. Runtime hashes matched source, wheel and installed
+package for all 21 Python files.
+
+Two earlier `-p --sandbox` attempts did fire Stop and deliver the failed receipt,
+but stopped at the direct file edit's permission prompt. Each exited 0 with one
+failed gate receipt and unchanged broken source; neither is scored as a pass.
+The first attempt also initialized the disposable user config. Retrying with an
+absolute write scope did not resolve the prompt. The successful run retained
+the sandbox and approved only the displayed edit interactively; unattended
+sandbox repair was not established. This matches the documented
+[direct-edit approval requirement](https://docs.devin.ai/cli/reference/permissions).
+
+An explicit disposable user config disabled cross-client imports, subagents and
+updates; the native MCP listing reported no configured servers. Test-only
+PreToolUse guards restricted reads to the fixture/policy/receipts and writes to
+the fixture. Only receipt read, source read and source edit were observed. Shell,
+web and MCP calls were disallowed. Existing native login was used without
+inspecting or copying credential files. This bounded session is not a general
+Devin security assessment. Required CI remains the merge barrier.
+
 ## Retained evidence
 
 Local evidence is under `.exitzero/live-validation/claude-gemini/`:
@@ -123,3 +168,9 @@ reproduction and cleanup; personal paths and client output are not committed.
 Antigravity evidence is under `.exitzero/live-validation/agy-0.5.1/`: `summary.json`,
 `verified.json`, `headless-control.json`, four final receipts, native Stop/tool
 records, the bounded interactive driver and the fixture-only scope guard.
+
+Devin evidence is under `.exitzero/live-validation/devin-0.5.1/`: `summary.json`,
+`verified.json`, two final receipts, Stop/tool records, the reviewed edit approval,
+bounded drivers and the two incomplete headless attempts. Initial lint rejection
+of standalone `hooks.v1.json` is retained separately; the documented nested
+configuration passed lint.

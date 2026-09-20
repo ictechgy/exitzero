@@ -149,6 +149,54 @@ Claude Code 2.1.278 (2026-09-20) ended with the validation account's weekly-limi
 HTTP 429 before a model response or Stop invocation. No live repair loop has
 been verified; see the [attempt and component evidence](LIVE_CLIENT_VALIDATION.md).
 
+## Devin CLI (manual compatible hook)
+
+Devin CLI can call the existing Claude-protocol runner from a project Stop hook.
+There is no `--adapter devin` installer or Devin-specific doctor diagnosis in
+0.5.1. Merge this entry into `.devin/config.json`, preserving other settings and
+hooks, and replace the two quoted paths with your installed executable and project:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/absolute/path/to/exitzero' --root '/absolute/path/to/project' hooks run --adapter claude --event stop",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Devin's timeout is in seconds. Review the project trust prompt and use `/hooks`
+to inspect loaded entries. This uses Devin's documented
+[Claude-compatible hook contract](https://docs.devin.ai/cli/extensibility/hooks/overview):
+`block` with a reason continues the agent on failure; `{}` permits completion.
+The adapter name selects the wire protocol; it does not imply Claude Code ran.
+
+Add `.devin/config.json` to the existing `[harness].config_files` list in
+`exitzero.toml`, then run `exitzero init --sync` and `exitzero lint-config`.
+This provides structural lint and includes the file hash in receipts; it does
+not create an installation record for drift detection. Devin's standalone
+`.devin/hooks.v1.json` uses a different top-level shape that exitzero 0.5.1's
+config linter does not support; the nested form above was live-tested.
+
+Devin CLI 3000.10.31 with `gemini-3-8-flash-low` and published exitzero 0.5.1
+completed fail→receipt→agent repair→pass in an interactive sandbox session.
+The controller reviewed and approved the single fixture edit once. In the tested
+`-p --sandbox` sessions, hooks fired, but the direct file edit required confirmation
+and the client exited 0 with only a failed receipt. A zero client exit is therefore
+insufficient evidence of repair. See [Devin's sandbox permission behavior](https://docs.devin.ai/cli/reference/permissions)
+and [the validation record](LIVE_CLIENT_VALIDATION.md#devin-cli-follow-up).
+Stop feedback remains separate from required CI merge protection.
+
 ## Codex
 
 ```sh
