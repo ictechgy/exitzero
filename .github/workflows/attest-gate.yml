@@ -1,0 +1,69 @@
+name: attest gate receipt
+on:
+  workflow_dispatch:
+    inputs:
+      negative_control:
+        description: Inject a syntax error to prove a failing gate cannot reach signing
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require the reviewed main branch
+        if: github.ref != 'refs/heads/main'
+        run: exit 1
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+      - name: Seed the requested negative control
+        if: inputs.negative_control
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          Path('packages/core/src/exitzero/_attestation_negative_control.py').write_text('def broken(:\n')
+          PY
+      - name: Run a fresh full gate
+        run: |
+          mkdir -p .exitzero
+          python bin/exitzero check --format json > .exitzero/ci-receipt.json
+      - name: Preserve the gate result on every outcome
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gate-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .exitzero/ci-receipt.json
+          include-hidden-files: true
+          if-no-files-found: error
+  attest:
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: gate-receipt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence
+      - name: Validate a successful full-run receipt
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path('evidence/ci-receipt.json').read_text())
+          assert receipt['command'] == 'check'
+          assert receipt['exit_code'] == 0 and receipt['status'] == 'passed'
+          assert receipt.get('receipt') and 'diff' not in receipt
+          assert receipt['checks'] and all(check['status'] != 'reused' for check in receipt['checks'])
+          PY
+      - name: Sign the receipt artifact using this workflow identity
+        uses: actions/attest@v4
+        with:
+          subject-path: evidence/ci-receipt.json

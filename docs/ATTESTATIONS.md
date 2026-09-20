@@ -4,7 +4,40 @@ The [optional workflow recipe](../examples/ci/attested-gate.yml) runs a fresh fu
 gate, signs the resulting JSON artifact through `actions/attest@v4`, and uploads
 the artifact even when the gate fails. Signing runs only after success. This
 uses GitHub's OIDC identity rather than a signing key stored in the repository.
-It is a recipe, not an enabled workflow or evidence of a hosted signing run.
+It is a portable recipe. This repository also provides a separate
+[manual validation workflow](../.github/workflows/attest-gate.yml) described below.
+
+## Manual validation in this repository
+
+`attest-gate.yml` runs only when dispatched against `main`. Its gate job has read
+permissions; a separate signing job receives only the resulting JSON artifact
+and does not check out or execute project code. OIDC and attestation write
+permissions belong only to the signing job. This is a manual validation path,
+not a newly required PR check, and it does not change branch protection.
+
+```sh
+gh workflow run attest-gate.yml --ref main -f negative_control=false
+gh workflow run attest-gate.yml --ref main -f negative_control=true
+```
+
+The negative control deliberately injects invalid Python in the runner's checkout.
+Its gate job must fail and its signing job must be skipped; the failed receipt is
+still uploaded. The positive run must produce a signed passing receipt. After
+downloading the positive artifact, verify the signer, ref and the exact tested
+commit (replace `COMMIT_SHA` with that run's `headSha`):
+
+```sh
+gh attestation verify ci-receipt.json --repo ictechgy/exitzero \
+  --signer-workflow ictechgy/exitzero/.github/workflows/attest-gate.yml \
+  --source-ref refs/heads/main --source-digest COMMIT_SHA \
+  --deny-self-hosted-runners --format json
+```
+
+A modified copy of the JSON must fail verification. This proves artifact integrity
+and the selected workflow identity; the policy and command checks remain trusted
+executable configuration. A successful gate can still contain advisory failures.
+
+## Adapting the portable recipe
 
 Use it only for trusted same-repository changes and a reviewed workflow/policy.
 The example explicitly fails for fork PRs instead of skipping a required job.
