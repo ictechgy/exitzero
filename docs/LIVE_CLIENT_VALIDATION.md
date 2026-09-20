@@ -6,8 +6,8 @@ The Gemini component test below verified a separate adapter fix. Subsequent
 Antigravity validation passed in interactive and headless modes. Devin CLI passed
 in an interactive sandbox with one approved fixture edit. Protected OpenCode and
 Zcode backend sessions also completed advisory MCP repair loops with Qwen and
-GLM respectively. Kimi has an offline native-client control only; its real-model
-run awaits an isolated login. These are separate client results.
+GLM respectively. Kimi subsequently completed its real-model MCP loop after an
+isolated native login. These are separate client results.
 
 ## Actual CLI attempts
 
@@ -265,8 +265,44 @@ rules and OS confinement remain separate controls. The hook mechanism itself is
 The local control allowed one newly created, authenticated broker port, with no
 public API domains allowed. A positive/negative socket control confirmed that
 the broker was reachable and an unrelated live host service remained blocked.
-The original Kimi credentials were not copied. A separate isolated login profile
-is ready, but its real-model validation awaits the operator's native login.
+The original Kimi credentials were not copied. The subsequent real-model test used
+a separate isolated login profile, as recorded below.
+
+## Protected Kimi live follow-up
+
+After the operator completed native login in the isolated profile, Kimi Code
+0.43.1 completed the real MCP repair loop with its configured default model,
+`kimi-for-coding`, through `api.kimi.ai/coding/v1`. The test used the installed
+safekimi protection engine, a separate ephemeral client profile and published
+exitzero 0.5.1 in the synthetic Git workspace.
+
+| Stage | Observed evidence |
+| --- | --- |
+| Initial gate | Receipt `dc54ef029b4b47abafb60e13e830b04f`, exit 1; seeded syntax error |
+| Model action | Read that receipt and the source, then Write only `src/broken.py` |
+| Final gate | Receipt `ef2a348363c447089cdcf3c3295cbc41`, exit 0; `answer()` returns 42 |
+
+The client exited 0 after five real API calls in a 28.947-second run. Five native
+tool calls had matching results and PreToolUse observations in the same session:
+two gate calls, two reads and one write. Every observed operation was within the
+fixture/receipt scope. The controller neither repaired source nor called the gate
+during this session. Source and policy hashes matched the saved receipts; all 21
+runtime files matched source, published wheel and installed package.
+
+The trusted local broker used the new isolated login's OAuth access token
+and device identifier for authentication. Neither was provided to the ephemeral
+agent process; the original host Kimi profile remained untouched. The broker pinned
+the endpoint and model, rejected unauthenticated local requests and redirects,
+and checked outbound bodies after home/workspace/hostname redaction. The client
+could reach its dedicated broker port; the socket control also confirmed denial
+of an unrelated host service.
+The native login profile is retained separately from disposable validation output.
+
+All five live calls had hook observations, including the first gate. This differs
+from the earlier scripted control's four observations; it establishes coverage
+for this session without explaining the earlier gap or proving universal hook
+reliability. The integration remains advisory MCP, with required CI providing
+merge protection.
 
 ## Retained evidence
 
@@ -301,4 +337,7 @@ Zcode and Kimi follow-up evidence is under `.exitzero/live-validation/safe-tail/
 Zcode `live-summary.json`, `live-verified.json`, two live receipts, native hooks
 and broker records; Kimi `kimi-offline/verified.json`, native streams, two component
 receipts and its broker-port control. Failed setup attempts are separate from the
-final results. The pending Kimi login workspace is retained for continuation.
+final results. The completed Kimi real-model evidence is in `safe-tail/kimi-live/`:
+`live-summary.json`, `live-verified.json`, two receipts, five native tool/guard
+records and broker request metadata. Login state is retained without committing
+credentials or raw personal paths.

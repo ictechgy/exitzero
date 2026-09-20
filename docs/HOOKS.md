@@ -526,7 +526,8 @@ its trusted configuration instead of weakening that isolation. See the
 
 The protected Zcode 0.16.5 backend also completed a real GLM-driven MCP repair
 loop through native `app-server --stdio`; its GUI and one-shot CLI are different
-surfaces and were not scored as successful by that result. Kimi Code 0.43.1 has
-an offline scripted-model MCP control, with its real-model run still pending
-isolated login. These are manual MCP integrations; 0.5.1 has no `zcode` or `kimi`
+surfaces and were not scored as successful by that result. Kimi Code 0.43.1 also
+completed a real `kimi-for-coding` MCP repair loop after isolated native login;
+its earlier scripted-model control is recorded separately. These are manual MCP
+integrations; 0.5.1 has no `zcode` or `kimi`
 hook installer. See the [separate client evidence](LIVE_CLIENT_VALIDATION.md#protected-zcode-backend-follow-up).
