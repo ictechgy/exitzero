@@ -25,6 +25,8 @@ The installed policy-pack scenario generates Cursor/pre-push hooks, rotates an
 independent authority pin without rewriting hook bytes, and diagnoses both
 adapters. It accepts editable changes, rejects disconnected registrations,
 protected additions and candidate policy weakening, then accepts the repair.
+Missing registrations and calls found only in a `with` body both fail; their
+different diagnostics and the unsupported call's source line are checked.
 These are installed CLI/configuration checks, not live IDE sessions.
 
 The runner also creates an isolated temporary Git repository and installs the

@@ -44,6 +44,33 @@ exception handlers, `with` bodies, short-circuit operands, assert messages or
 comprehensions do not satisfy the declared connection. Choose a straight-line
 site or a project-specific command check for a more dynamic framework.
 
+## Missing use versus unsupported use
+
+When the imported symbol has no matching use in the selected scope, the finding
+says `Connection has no matching use in the selected scope`. Check the configured
+scope, call or registration, and restore a required connection if it was removed.
+
+If a matching use exists only in conditional or repeated code, including a
+`with` body, the finding instead says `Connection has a matching use only in
+unsupported conditional or repeated code`. It points to the first matching
+use's line and recommends a behavior/contract test through a `command` check.
+This means the checker cannot establish the static relationship; it does not
+claim that the call is absent or that it executes at runtime. A matching use
+in the supported part of the scope still passes even if conditional uses also
+exist. Shadowed bindings and uses in a different nested scope do not qualify.
+
+For an unsupported wrapper, run an executable test that exercises the wrapper
+and asserts its result or error. A maintainer can then review whether that
+contract check should replace the unsupported connection declaration. Adding a
+passing command alone does not clear the existing connection finding. Do not
+move code out of its control-flow context merely to satisfy the static check.
+
+Both findings remain violations under the configured check ID. With the default
+`enforcement = "block"`, both return exit 1. An explicitly configured `warn`
+policy keeps the check failed and the finding visible while allowing exit 0.
+The diagnostic does not change enforcement or the supported syntax. JSON and
+SARIF retain the message and, for unsupported matching uses, the source line.
+
 ## Evidence and limits
 
 The receipt fingerprints both declared files and Python files under the module

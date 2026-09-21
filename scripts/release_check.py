@@ -465,9 +465,24 @@ immutable = [".cursor/**", "AGENTS.md"]
     deleted_registration = _json_cli(run, cli, repo, env, ["check", "--trust-base", baseline_b],
                                       "authority-connection-deleted", 1)
     run.archive_receipts("authority-connection-deleted", repo)
-    if not any(finding.get("rule") == "connections" for finding in deleted_registration.get("findings", [])):
+    if not any(finding.get("rule") == "connections" and "no matching use" in finding.get("message", "")
+               for finding in deleted_registration.get("findings", [])):
         raise ReleaseFailure("installed python.connections did not reject deleted registration")
     evidence("connection-deleted", deleted_registration)
+    (repo / "app.py").write_text(
+        "from contextlib import nullcontext\nfrom lib import handler\n"
+        "with nullcontext():\n    handler()\n", encoding="utf-8")
+    unsupported = _json_cli(run, cli, repo, env, ["check", "--trust-base", baseline_b],
+                            "authority-connection-unsupported", 1)
+    run.archive_receipts("authority-connection-unsupported", repo)
+    findings = unsupported.get("findings", [])
+    if (len(findings) != 1 or findings[0].get("rule") != "connections"
+            or "unsupported conditional or repeated code" not in findings[0].get("message", "")
+            or "command check" not in findings[0].get("message", "")
+            or findings[0].get("line") != 4 or findings[0].get("severity") != "error"
+            or findings[0].get("category") != "violation"):
+        raise ReleaseFailure("installed connection diagnostic did not distinguish unsupported use")
+    evidence("connection-unsupported", unsupported)
     (repo / "app.py").write_text(editable_source, encoding="utf-8")
     (repo / "tests/new.py").write_text("value = 1\n", encoding="utf-8")
     protected = _json_cli(run, cli, repo, env, ["check", "--trust-base", baseline_b], "authority-protected", 1)
