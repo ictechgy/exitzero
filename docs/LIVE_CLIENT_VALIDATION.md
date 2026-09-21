@@ -1,5 +1,11 @@
 # Live client validation
 
+A fresh [0.6.0 riskgate validation](PILOT_POLICY_PACK.md#fresh-native-antigravity-evidence)
+on 2026-09-21 passed Antigravity's native Stop repair loop with a trusted policy
+baseline. It verifies 12 real CLI contracts in a confined gate subprocess;
+the full upstream suite is separate offline evidence. The records below retain
+their original package versions and dates.
+
 Run date: 2026-09-20. Claude Code and Gemini CLI model-driven repair loops remain
 **unverified** because the configured accounts rejected their live requests.
 The Gemini component test below verified a separate adapter fix. Subsequent

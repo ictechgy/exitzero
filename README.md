@@ -469,6 +469,9 @@ The [riskgate pilot](docs/PILOT_RISKGATE.md) applies the same gate to a
 pinned real repository. It checks a passing baseline and four independent
 faults, including an empty test that the upstream test runner still accepts.
 Its runner preserves the original checkout and records all gate receipts.
+The [0.6.0 policy-pack follow-up](docs/PILOT_POLICY_PACK.md) checks permission
+zones and real connections, including a test rewrite that stays green upstream,
+an unsupported `with`-body call, and a fresh native Antigravity repair session.
 The [vecdiff pilot](docs/PILOT_VECDIFF.md) adds external NumPy dependencies
 and independent numeric review contracts. The [Node pilot](docs/PILOT_NODE.md)
 connects p-limit's real tests, lint and TypeScript declaration checks, including
