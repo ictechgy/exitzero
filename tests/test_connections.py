@@ -228,6 +228,17 @@ class ConnectionTests(unittest.TestCase):
                 self.assertEqual(len(findings), 1)
                 self.assertIn("no matching use", findings[0].message)
 
+    def test_short_circuit_comparison_and_assert_message_do_not_connect(self):
+        for expression in ("False == True == handler()", "assert True, handler()",
+                           "False and handler()", "True or handler()"):
+            with self.subTest(expression=expression):
+                root = self.write_pair("from lib import handler\n" + expression + "\n")
+                self.assertTrue(check_connections(self.context(root), self.spec(self.connection())))
+        root = self.write_pair("from lib import handler\nassert handler()\n")
+        self.assertEqual(check_connections(self.context(root), self.spec(self.connection())), [])
+        root = self.write_pair("from lib import handler\nTrue == handler()\n")
+        self.assertEqual(check_connections(self.context(root), self.spec(self.connection())), [])
+
     def test_duplicate_scope_names_are_ambiguous(self):
         root = self.write_pair(
             "from lib import handler\n"

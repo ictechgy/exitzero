@@ -336,6 +336,12 @@ def _walk_scope_context(statements: Iterable[ast.stmt]) -> Iterable[tuple[ast.AS
         if isinstance(node, ast.BoolOp):
             return [(value, conditional if index == 0 else True)
                     for index, value in enumerate(node.values)]
+        if isinstance(node, ast.Compare):
+            return ([(node.left, conditional)]
+                    + [(value, conditional if index == 0 else True)
+                       for index, value in enumerate(node.comparators)])
+        if isinstance(node, ast.Assert):
+            return [(node.test, conditional)] + ([(node.msg, True)] if node.msg is not None else [])
         if isinstance(node, ast.IfExp):
             return [(node.test, conditional), (node.body, True), (node.orelse, True)]
         if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):

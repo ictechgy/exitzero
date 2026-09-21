@@ -38,10 +38,11 @@ Deleting the registration or leaving only a string containing its text fails.
 
 Each target must contain one unconditional module-level function or class
 declaration. Ambiguous module roots, wildcard imports, conditional imports,
-rebindings and monkeypatches are conservatively rejected. A scope is a function,
-method, nested function, or `<module>`. Conditional use sites do not establish a
-connection; choose an explicit unconditional site or a project-specific command
-check for a more dynamic framework.
+direct name/attribute rebindings are conservatively rejected. A scope is a
+function, method, nested function, or `<module>`. Uses inside branches, loop bodies,
+exception handlers, `with` bodies, short-circuit operands, assert messages or
+comprehensions do not satisfy the declared connection. Choose a straight-line
+site or a project-specific command check for a more dynamic framework.
 
 ## Evidence and limits
 
@@ -61,7 +62,9 @@ test assertion quality, framework semantics, or correctness of the target.
 Run actual behavior/contract tests alongside it. For example, a test should
 assert the exact result or error of `total(...)`; the connection check only
 establishes that the declared test refers to the production symbol. Dynamic
-imports, dependency injection, decorators that replace implementations, and
-arbitrary control flow need executable project checks. Native hook/gateway
+imports, reflection or helper-driven monkeypatching, dependency injection,
+decorators that replace implementations, and arbitrary control flow need
+executable project checks. Preceding exceptions/returns and interpreter options
+can also prevent a syntactically connected call from executing. Native hook/gateway
 events are needed to observe intermediate tool actions; this check does not
 invent an execution trace from a final diff.
