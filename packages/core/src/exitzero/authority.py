@@ -11,7 +11,7 @@ import stat
 import subprocess
 
 from .api import Finding
-from .files import is_sensitive, match_path, safe_path, validate_relative
+from .files import is_sensitive, match_path, open_regular, safe_path, validate_relative
 
 _MAX_FILES = 20000
 _MAX_FILE_BYTES = 32 * 1024 * 1024
@@ -76,19 +76,18 @@ def _worktree(root: Path, baseline: dict, algorithm: str) -> dict:
         metadata = path.lstat()
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > _MAX_FILE_BYTES:
             raise ValueError("Permission inspection requires bounded regular files")
-        total += metadata.st_size
+        before_size = metadata.st_size
+        total += before_size
         if total > _MAX_TOTAL_BYTES:
             raise ValueError("Permission inspection byte budget exceeded")
         # No clean filters or assume-unchanged/skip-worktree index flags influence
         # these raw bytes. The second snapshot checks membership and modes too.
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-        with os.fdopen(fd, "rb") as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                raise ValueError("Permission input is not a regular file")
+        with open_regular(path, root=root) as stream:
+            metadata = os.fstat(stream.fileno())
             data = stream.read(_MAX_FILE_BYTES + 1)
         if len(data) > _MAX_FILE_BYTES:
             raise ValueError("Permission inspection byte budget exceeded")
-        total += len(data) - metadata.st_size
+        total += len(data) - before_size
         if total > _MAX_TOTAL_BYTES:
             raise ValueError("Permission inspection byte budget exceeded")
         blob = hashlib.new(algorithm, b"blob " + str(len(data)).encode() + b"\0" + data).hexdigest()

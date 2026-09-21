@@ -30,7 +30,7 @@
     }, "additionalProperties": false}},
     "diagnostics": {"type": "array", "description": "Project setup observations from doctor, not evidence of runtime enforcement.", "items": {
       "type": "object", "required": ["target", "state", "runtime", "path", "detail", "next_step"], "properties": {
-        "target": {"enum": ["cursor", "claude", "codex", "gemini", "agy", "copilot", "pre-commit", "pre-push", "CI", "permissions"]},
+        "target": {"type": "string", "minLength": 1, "description": "Client adapter, CI, permissions, or check.<id> for optional plugin setup diagnostics."},
         "state": {"enum": ["configured", "missing", "unmanaged", "misconfigured", "unknown"]},
         "runtime": {"const": "unverified"},
         "path": {"type": ["string", "null"]}, "detail": {"type": "string"}, "next_step": {"type": "string"}

@@ -19,7 +19,8 @@ def register(registry):
     registry.add_check("example.check", check)
 ```
 
-`Context` contains `root`, parsed `policy`, `policy_path`, and `diff` (the
+`Context` contains `root`, parsed `policy`, `policy_path`, `command` (default
+`"check"`, also `"lint-config"` or `"doctor"`), and `diff` (the
 `check --diff` ref or `None`; when set, a narrowed selection may legitimately
 select zero files). `CheckSpec` contains
 `id`, `kind`, `paths`, an `options` table, `enforcement` (`"block"` by default,
@@ -41,7 +42,7 @@ be reused. Linter, hook-handler and core errors retain their normal gate behavio
 
 Registration methods:
 
-- `add_check(kind, handler(context, spec), *, inputs=None)`
+- `add_check(kind, handler(context, spec), *, inputs=None, setup=None)`
 - `add_linter(name, handler(context))`
 - `add_hook(slot, handler(context, slot))`, for `PreToolUse`, `PostToolUse`,
   `pre-commit`, `pre-push`, `CI`.
@@ -62,6 +63,17 @@ non-string or invalid path patterns, discovery exceptions and traversal I/O erro
 are operational errors (exit 2), with the normal receipt-persistence attempt.
 Providers should include all files influencing a check, even outside `spec.paths`,
 and return globs covering possible new members rather than only existing names.
+When provider-declared dependencies change under `--diff`, core rechecks the
+original check scope so an unchanged consumer cannot hide a broken dependency.
+
+The optional `setup(context, spec)` callback is used only by `doctor`. It must
+not execute the verifier, skills or MCP tools. Return a three-string tuple
+`(state, detail, next_step)`, where state is `configured`, `missing`,
+`misconfigured` or `unknown`. Core records a `check.<id>` diagnostic with runtime
+`unverified`; a non-configured required check is a setup violation. Keep details
+generic and free of file contents or credentials. An input provider can use
+`context.command == "doctor"` to return safe partial input paths for unavailable
+setup, allowing the callback to explain it; verification must remain strict.
 
 Core owns policy parsing, the registry, dispatch, generated AGENTS section, hook
 adapters and receipt persistence. Plugins own check semantics. `check` runs
@@ -76,7 +88,7 @@ has `target`, `state`, `runtime`, `path`, `detail`, and `next_step`; runtime is
 always `unverified`. Doctor does not infer execution from prior receipts and
 leaves requirement mappings unverified without failing for missing execution.
 Its extra project hook inputs are included in both stability snapshots.
-There is no new plugin registration method; `doctor` is a reserved core command.
+`doctor` is a reserved core command; plugin setup callbacks extend its observations.
 
 An optional policy `permissions` table declares `editable`, `protected` and
 `immutable` path arrays. Core enforces these only against an independently
@@ -130,6 +142,11 @@ Verification kinds in v1:
   `reuse = false`; the input provider validates options without reading Git.
   Missing/changed refs are operational errors, unsupported source is a finding.
   See [supported forms and limits](NODE_TEST_INTEGRITY.md).
+- `python.connections`: declared static import and call/registration relationships;
+  see [connection checks](CONNECTION_CHECKS.md). No repository Python is executed.
+- `agentwarden.audit` / `agentwarden.scan`: optional external AgentWarden 0.3.2
+  verification, with strict local inputs, structured verdicts and setup-only doctor
+  observations. See [the integration](AGENTWARDEN.md). No implicit installation.
 
 ### Requirement mappings
 

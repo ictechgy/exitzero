@@ -19,6 +19,8 @@ from typing import Any, Iterable
 
 from exitzero.api import CheckSpec, Context, Finding
 from .node_integrity import check_integrity as check_node_integrity, integrity_inputs as node_integrity_inputs
+from .connections import check_connections, connection_inputs
+from .agentwarden import check_agentwarden, agentwarden_inputs, inspect_setup as agentwarden_setup
 
 API_VERSION = 1
 
@@ -31,6 +33,9 @@ def register(registry: Any) -> None:
     registry.add_check("python.test-quality", check_test_quality)
     registry.add_check("python.test-integrity", check_test_integrity)
     registry.add_check("node.test-integrity", check_node_integrity, inputs=node_integrity_inputs)
+    registry.add_check("python.connections", check_connections, inputs=connection_inputs)
+    registry.add_check("agentwarden.audit", check_agentwarden, inputs=agentwarden_inputs, setup=agentwarden_setup)
+    registry.add_check("agentwarden.scan", check_agentwarden, inputs=agentwarden_inputs, setup=agentwarden_setup)
     registry.add_check("command", check_command)
 
 
