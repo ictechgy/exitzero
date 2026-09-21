@@ -43,3 +43,18 @@ These ship in 0.4.0. Copilot CLI 1.0.86 has live prompt-mode evidence with expli
 repository hook loading. A manual main-branch workflow validates gate receipt
 attestations; the portable PR recipe remains opt-in. Cloud control planes, generic shell-command
 inspection and automatic rollback remain outside this implementation.
+
+## 0.6.0 — connected checks and controlled self-edits
+
+Implemented: bounded Python import/use-site connections, dependency-aware diff
+checks, permission zones from an independently supplied trusted commit, and
+permission decisions in receipts and ledgers. Candidate policy edits cannot
+authorize themselves. Protected changes require a separate maintainer review
+process; this is a merge-time gate, not a filesystem sandbox.
+
+A declared client list drives policy-pack previews/application and doctor
+requirements. Generated hooks can use an operator pin stored outside tracked
+hook content. Optional AgentWarden 0.3.2 audit/scan checks reuse its local verifier
+and lock format; doctor only inspects setup. Node incident kits use built-in tests
+without installing dependencies. Runtime action monitoring, semantic test proof,
+automatic approval and universal client failClosed remain outside these claims.
