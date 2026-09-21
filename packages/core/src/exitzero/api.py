@@ -40,10 +40,12 @@ class Context:
     # Set when the run is narrowed by `check --diff`: scoped-out selections
     # may legitimately select zero files (e.g. every matched path was deleted).
     diff: str | None = None
+    command: str = "check"
 
 
 CheckHandler = Callable[[Context, CheckSpec], list[Finding]]
 InputHandler = Callable[[Context, CheckSpec], list[str] | tuple[str, ...]]
+SetupHandler = Callable[[Context, CheckSpec], tuple[str, str, str]]
 LintHandler = Callable[[Context], list[Finding]]
 HookHandler = Callable[[Context, str], list[Finding]]
 
@@ -58,13 +60,19 @@ class Registry:
     commands: dict[str, Callable[[Context, list[str]], int]] = field(default_factory=dict)
 
     check_inputs: dict[str, InputHandler] = field(default_factory=dict)
+    check_setup: dict[str, SetupHandler] = field(default_factory=dict)
 
-    def add_check(self, name: str, handler: CheckHandler, *, inputs: InputHandler | None = None) -> None:
+    def add_check(self, name: str, handler: CheckHandler, *, inputs: InputHandler | None = None,
+                  setup: SetupHandler | None = None) -> None:
         if inputs is not None and not callable(inputs):
             raise ValueError("Invalid plugin input registration")
+        if setup is not None and not callable(setup):
+            raise ValueError("Invalid plugin setup registration")
         self._add(self.checks, name, handler)
         if inputs is not None:
             self.check_inputs[name] = inputs
+        if setup is not None:
+            self.check_setup[name] = setup
 
     def add_linter(self, name: str, handler: LintHandler) -> None:
         self._add(self.linters, name, handler)
@@ -75,7 +83,7 @@ class Registry:
         self.hooks.setdefault(slot, []).append(handler)
 
     def add_command(self, name: str, handler: Callable[[Context, list[str]], int]) -> None:
-        if name in {"init", "check", "lint-config", "doctor", "hooks", "report", "plugin"}:
+        if name in {"init", "check", "lint-config", "doctor", "policy-pack", "hooks", "report", "plugin"}:
             raise ValueError("Reserved CLI command")
         self._add(self.commands, name, handler)
 

@@ -20,13 +20,43 @@ class IncidentTests(TestCase):
     def test_expected_behavior_is_preserved(self):
         self.fail("Replace with an assertion for a neighboring valid case.")
 '''
+_NODE_TEST = ''''use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+test('reported regression', () => {
+  assert.fail('Replace with a regression assertion against production code.');
+});
+
+test('expected behavior is preserved', () => {
+  assert.fail('Replace with an assertion for a neighboring valid case.');
+});
+'''
+_NODE_EXTENSIONS = ("js", "jsx", "mjs", "cjs", "ts", "tsx", "mts", "cts")
+_NODE_CONFIG_NAMES = (
+    "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml",
+    "pnpm-workspace.yaml", "yarn.lock", "bun.lock", "bun.lockb", "tsconfig*.json",
+    "jsconfig*.json", ".eslintrc", ".eslintrc.json", ".eslintrc.yml", ".eslintrc.yaml",
+)
+
+
+def _node_input_paths(paths: list[str], test_path: str, manifest_path: str) -> list[str]:
+    """Return conservative, explicit Node inputs for a generated command."""
+
+    defaults = [f"**/*.{extension}" for extension in _NODE_EXTENSIONS]
+    defaults.extend(f"**/{name}" for name in _NODE_CONFIG_NAMES)
+    defaults.extend((test_path, manifest_path))
+    return list(dict.fromkeys([*defaults, *paths]))
 
 
 def incident_kit(context: Context, argv: list[str]) -> int:
     parser = argparse.ArgumentParser(prog="exitzero plugin incident-kit")
     parser.add_argument("--id", required=True, help="Lowercase incident name (letters, digits and hyphens)")
     parser.add_argument("--description", required=True, help="Short incident description; stored locally, not executed")
-    parser.add_argument("--path", action="append", default=[], help="Input glob; repeat for code and fixtures (default: **/*.py)")
+    parser.add_argument("--profile", choices=("python", "node"), default="python",
+                        help="Test kit profile (default: python)")
+    parser.add_argument("--path", action="append", default=[], help="Input glob; repeat for code and fixtures (defaults follow the profile)")
     try:
         args = parser.parse_args(argv)
     except SystemExit as error:
@@ -38,7 +68,7 @@ def incident_kit(context: Context, argv: list[str]) -> int:
             raise ValueError("Provide an incident description of 1 to 1000 characters.")
         if not {"verify", "exitzero_verify"} & set(context.policy["plugins"]):
             raise ValueError("Enable the bundled verify plugin before generating an incident kit.")
-        paths = args.path or ["**/*.py"]
+        paths = args.path or (["**/*.py"] if args.profile == "python" else [])
         for pattern in paths:
             validate_relative(pattern)
         select_files(context.root, paths)
@@ -51,25 +81,44 @@ def incident_kit(context: Context, argv: list[str]) -> int:
         agents_path = safe_path(context.root, "AGENTS.md")
         if os.path.lexists(agents_path) and not agents_path.is_file():
             raise ValueError("AGENTS.md must be a regular file.")
-        test_path = f"{relative}/test_incident.py"
+        extension = "py" if args.profile == "python" else "cjs"
+        test_path = f"{relative}/test_incident.{extension}"
+        manifest_path = f"{relative}/incident.json"
+        fingerprint_paths = (paths if args.profile == "python"
+                             else _node_input_paths(paths, test_path, manifest_path))
+        select_files(context.root, fingerprint_paths)
         quality_id, regression_id = f"incident.{args.id}.quality", f"incident.{args.id}.regression"
-        fragment = (
-            f'\n[[checks]]\nid = "{quality_id}"\nkind = "python.test-quality"\n'
-            f'paths = {json.dumps([test_path])}\n'
-            f'\n[[checks]]\nid = "{regression_id}"\nkind = "command"\nreuse = false\n'
-            f'paths = {json.dumps(list(dict.fromkeys([*paths, test_path])), ensure_ascii=False)}\n'
-            '[checks.options]\n'
-            f'argv = {json.dumps(["{python}", "-B", "-m", "unittest", "discover", "-s", relative, "-p", "test_incident.py"])}\n'
-            'timeout = 60\n'
-            f'\n[[requirements]]\nid = "incident.{args.id}"\n'
-            'description = "Regression and neighboring behavior are covered by the incident tests."\n'
-            f'checks = {json.dumps([quality_id, regression_id])}\n'
-        )
+        if args.profile == "python":
+            fragment = (
+                f'\n[[checks]]\nid = "{quality_id}"\nkind = "python.test-quality"\n'
+                f'paths = {json.dumps([test_path])}\n'
+                f'\n[[checks]]\nid = "{regression_id}"\nkind = "command"\nreuse = false\n'
+                f'paths = {json.dumps(list(dict.fromkeys([*paths, test_path])), ensure_ascii=False)}\n'
+                '[checks.options]\n'
+                f'argv = {json.dumps(["{python}", "-B", "-m", "unittest", "discover", "-s", relative, "-p", "test_incident.py"])}\n'
+                'timeout = 60\n'
+                f'\n[[requirements]]\nid = "incident.{args.id}"\n'
+                'description = "Regression and neighboring behavior are covered by the incident tests."\n'
+                f'checks = {json.dumps([quality_id, regression_id])}\n'
+            )
+        else:
+            fragment = (
+                f'\n[[checks]]\nid = "{regression_id}"\nkind = "command"\nreuse = false\n'
+                f'paths = {json.dumps(fingerprint_paths, ensure_ascii=False)}\n'
+                '[checks.options]\n'
+                f'argv = {json.dumps(["node", "--test", test_path])}\n'
+                'timeout = 60\n'
+                f'\n[[requirements]]\nid = "incident.{args.id}"\n'
+                'description = "Regression and neighboring behavior are covered by the incident tests."\n'
+                f'checks = {json.dumps([regression_id])}\n'
+            )
         policy_text = policy_path.read_text(encoding="utf-8").rstrip() + "\n" + fragment
         policy = parse_policy(policy_text)
         agents = updated_agents(agents_path.read_text(encoding="utf-8") if agents_path.is_file() else "", policy)
         prefix = shlex.join(["exitzero", "--policy", policy_path.relative_to(context.root).as_posix()])
-        readme = f'''# Incident regression kit
+        if args.profile == "python":
+            test_text = _TEST
+            readme = f'''# Incident regression kit
 
 `incident.json` holds the incident description as data. The generated tests
 deliberately fail until you replace both placeholders with real assertions.
@@ -94,10 +143,48 @@ Include non-Python fixtures and configuration with repeated `--path` arguments
 when generating a kit. Review the policy inputs as the regression evolves.
 The generator does not infer correct assertions or prove semantic test quality.
 '''
+        else:
+            test_text = _NODE_TEST
+            readme = f'''# Incident regression kit
+
+`incident.json` holds the incident description as data. The generated Node
+tests deliberately fail until you replace both placeholders with real
+assertions.
+
+1. Import the production behavior in `test_incident.cjs` and add the reported
+   regression plus a neighboring valid case. Do not replace the placeholders
+   with skip markers or constant assertions.
+2. On the buggy implementation, run `{prefix} check --format json`; confirm
+   `{regression_id}` fails for the reported behavior, and keep its receipt.
+3. Repair production code and run the same command; both tests must pass.
+   Keep the new receipt. A green placeholder edit is not evidence of a repair.
+
+The kit uses Node's built-in `node:test` runner and `node:assert/strict`; it
+does not install packages or mutate hooks.
+There is no static JavaScript or TypeScript test-quality check in this profile.
+The command only proves that
+the explicit test file loads and exits successfully; assertion quality,
+coverage, and test completeness remain the project's responsibility.
+Once reviewed tests are committed, enable `node.test-integrity` against an
+independently trusted baseline to detect later test deletion or suppression.
+
+The new command and requirement mapping are already in the repository policy.
+Existing exitzero hooks and CI use that policy. For a new client run
+`{prefix} doctor`, then `{prefix} hooks install --adapter NAME` for the desired
+supported adapter. Configure required CI as described in
+https://github.com/ictechgy/exitzero/blob/main/docs/HOOKS.md#required-ci-setup.
+No hooks are installed by this generator.
+
+The command fingerprints the supplied input paths, the generated manifest and
+test, JavaScript/TypeScript files, package manifests and common tool configs.
+It always runs afresh. Include additional fixtures or configs with repeated
+`--path` arguments when generating a kit. Review policy inputs as the
+regression evolves.
+'''
         outputs = {
-            f"{relative}/test_incident.py": _TEST,
-            f"{relative}/incident.json": json.dumps({"schema_version": 1, "id": args.id,
-                                                     "description": args.description}, ensure_ascii=False, indent=2) + "\n",
+            test_path: test_text,
+            manifest_path: json.dumps({"schema_version": 1, "id": args.id,
+                                       "description": args.description}, ensure_ascii=False, indent=2) + "\n",
             f"{relative}/README.md": readme,
         }
         destinations = [(safe_path(context.root, name), text) for name, text in outputs.items()]

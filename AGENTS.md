@@ -56,7 +56,8 @@ Required checks:
 - `imports`: `python.imports` (packages/**/*.py)
 - `test-quality`: `python.test-quality` (tests/test_*.py)
 - `regression-suite`: `command` (packages/**/*.py, scripts/run_tests.py, tests/test_*.py)
+- `verifier-connections`: `python.connections` (packages/plugin-verify/src/exitzero_verify/*.py)
 - Rule `completion-evidence`: Require runner exit codes and persisted receipts before claiming completion.
 
-Policy SHA-256: `121b7e861321c65740769c2eb54fd4eab6abb9eff1be27d7baac59f23d2c7f7d`
+Policy SHA-256: `d3294a88048080ba40d69f7568d71c1f9c1be9ac6c4b367bfc95de4e20165786`
 <!-- exitzero:end -->

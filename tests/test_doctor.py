@@ -63,6 +63,35 @@ class DoctorTests(unittest.TestCase):
         self.assertIn(".cursor/hooks.json", installed["inputs"])
         self.assertEqual(self.row(installed, "cursor")["runtime"], "unverified")
 
+    def test_policy_pack_preview_apply_and_declared_client_diagnosis(self):
+        policy = self.root / "exitzero.toml"
+        policy.write_text(policy.read_text() + '\n[clients]\nadapters = ["cursor", "claude"]\n')
+        self.cli("init", "--sync")
+        before = {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()}
+        preview = json.loads(self.cli("policy-pack", "--format", "json").stdout)
+        self.assertFalse(preview["applied"])
+        self.cli("policy-pack", "--check", expected=1)
+        self.assertEqual(before, {p.relative_to(self.root): p.read_bytes() for p in self.root.rglob("*") if p.is_file()})
+        missing = self.doctor(expected=1)
+        self.assertEqual({f["rule"] for f in missing["findings"]}, {"doctor.required-adapter"})
+        applied = json.loads(self.cli("policy-pack", "--apply", "--format", "json").stdout)
+        self.assertEqual(applied, json.loads((self.root / applied["receipt"]).read_text()))
+        self.cli("policy-pack", "--check")
+        healthy = self.doctor()
+        self.assertEqual(self.row(healthy, "cursor")["state"], "configured")
+        self.assertEqual(self.row(healthy, "claude")["runtime"], "unverified")
+        self.doctor("--adapter", "gemini", expected=1)
+
+    def test_policy_pack_invalid_client_declaration_writes_nothing(self):
+        policy = self.root / "exitzero.toml"
+        for adapters in ('[]', '["cursor", "cursor"]', '["unsupported"]'):
+            with self.subTest(adapters=adapters):
+                policy.write_text('version = 1\nplugins = ["exitzero_verify"]\n'
+                                  '[[checks]]\nid = "syntax"\nkind = "python.syntax"\n'
+                                  '[clients]\nadapters = ' + adapters + '\n')
+                self.cli("policy-pack", "--apply", expected=2)
+                self.assertFalse((self.root / ".cursor").exists())
+
     def test_reinstalled_fail_open_hook_still_fails_diagnosis(self):
         self.cli("hooks", "install", "--adapter", "cursor")
         self.edit_cursor(failClosed=False)

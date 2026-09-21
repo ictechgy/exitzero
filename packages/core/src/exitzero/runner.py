@@ -10,6 +10,7 @@ import subprocess
 
 from . import __version__
 from .api import CheckSpec, Context, Finding, Registry
+from .authority import AuthorityDenied, inspect as inspect_authority, finish as finish_authority
 from .doctor import diagnose, input_paths as doctor_inputs
 from .files import EXCLUDED, is_sensitive, match_path, safe_path, select_files, sha256_file
 from .ledger import persist
@@ -69,7 +70,7 @@ def _snapshot(context: Context, registry: Registry, collect: dict | None = None,
         candidate = safe_path(root, name)
         if candidate.is_file():
             files.add(candidate)
-    return {p.relative_to(root).as_posix(): sha256_file(p) for p in sorted(files)}
+    return {p.relative_to(root).as_posix(): sha256_file(p, root=root) for p in sorted(files)}
 
 
 def _prior_check_receipts(root: Path):
@@ -182,16 +183,20 @@ def _diff_changed_files(root: Path, ref: str) -> list[str]:
     """
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "diff", "--name-only", "-z", "--relative", ref, "--"],
+            ["git", "-c", "core.fsmonitor=false", "-C", str(root), "diff", "--no-ext-diff", "--no-textconv",
+             "--name-only", "-z", "--relative", ref, "--"],
+            capture_output=True, text=True, timeout=15, check=False)
+        untracked = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-C", str(root), "ls-files", "--others", "--exclude-standard", "-z"],
             capture_output=True, text=True, timeout=15, check=False)
     except FileNotFoundError:
         raise ValueError("--diff requires a git executable on PATH") from None
     except subprocess.TimeoutExpired:
         raise ValueError("git diff for --diff timed out") from None
-    if result.returncode != 0:
+    if result.returncode != 0 or untracked.returncode != 0:
         raise ValueError(f"--diff range {ref!r} is not a resolvable git revision")
     changed = []
-    for relative in result.stdout.split("\0"):
+    for relative in (result.stdout + "\0" + untracked.stdout).split("\0"):
         if not relative:
             continue
         parts = Path(relative).parts
@@ -224,7 +229,8 @@ def _narrow_specs(checks: list[CheckSpec], changed: list[str]) -> list[CheckSpec
 
 def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         input_error: bool = False, reuse: bool = False, diff: str | None = None,
-        doctor_adapter: str | None = None) -> dict:
+        doctor_adapter: str | None = None, trust_base: str | None = None,
+        authority_error: bool = False) -> dict:
     started = time.monotonic()
     receipt = {"schema_version": 1, "tool_version": __version__, "run_id": uuid.uuid4().hex,
                "started_at": datetime.now(timezone.utc).isoformat(), "command": command,
@@ -233,15 +239,28 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
     findings: list[Finding] = []
     operational_error = False
     inputs_changed = False
+    authority_state = None
     verification_outcomes: dict[str, str] = {}
     if command == "doctor":
         receipt["diagnostics"] = []
     try:
+        if authority_error:
+            raise ValueError("Installed authority is unavailable")
+        if trust_base is not None:
+            receipt["permissions"], result, authority_state = inspect_authority(root, policy_name, trust_base)
+            findings.extend(result)
+            # Reject self-authorized edits before loading candidate plugins or commands.
+            if result:
+                raise AuthorityDenied()
         path = safe_path(root, policy_name)
         if not path.is_file():
             raise ValueError("Policy must be a regular file")
-        receipt["policy_sha256"] = sha256_file(path)
-        policy = load_policy(path)
+        receipt["policy_sha256"] = sha256_file(path, root=root)
+        # With independent authority, even a concurrent candidate-policy swap
+        # must not change which plugins/commands are dispatched.
+        policy = authority_state["policy"] if authority_state is not None else load_policy(path)
+        if "permissions" in policy and trust_base is None and command not in {"lint-config", "doctor"}:
+            raise ValueError("Permission zones require an independently supplied trust-base")
         if "requirements" in policy:
             receipt["requirements"] = [{"id": requirement["id"], "checks": list(requirement["checks"]),
                                         "status": "unverified"} for requirement in policy["requirements"]]
@@ -249,7 +268,7 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         if command in {"lint-config", "doctor"} and not registry.linters:
             raise ValueError("No config linter is registered")
         receipt["plugins"] = policy["plugins"]
-        context = Context(root, policy, path, diff)
+        context = Context(root, policy, path, diff, command)
         if slot in {"pre-commit", "pre-push"}:
             dirty = subprocess.run(["git", "-C", str(root), "diff", "--quiet", "--"],
                                    capture_output=True, timeout=15)
@@ -270,9 +289,16 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         if any(spec.kind not in registry.checks for spec in checks):
             raise ValueError("Policy references an unregistered check kind")
         if diff is not None:
-            # --diff narrows both the checked selection and the stability
-            # snapshot to the changed set; the receipt records the range.
-            checks = _narrow_specs(checks, _diff_changed_files(root, diff))
+            changed = _diff_changed_files(root, diff)
+            narrowed = _narrow_specs(checks, changed)
+            for index, spec in enumerate(checks):
+                # A changed dependency can break an unchanged consumer. Checks
+                # declaring extra inputs re-evaluate their original scope when
+                # any of those inputs change, including additions/deletions.
+                patterns = _spec_patterns(context, registry, spec)
+                if len(patterns) > len(spec.paths) and any(match_path(name, patterns) for name in changed):
+                    narrowed[index] = replace(spec, paths=spec.paths or tuple(patterns))
+            checks = narrowed
             receipt["diff"] = diff
         check_inputs: dict[str, list[str]] = {}
         receipt["inputs"] = _snapshot(context, registry, check_inputs, checks, doctor=command == "doctor")
@@ -283,6 +309,28 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         if command == "doctor":
             receipt["diagnostics"], result = diagnose(context, doctor_adapter)
             findings.extend(result)
+            for spec in checks:
+                handler = registry.check_setup.get(spec.kind)
+                if handler is None:
+                    continue
+                observation = handler(context, spec)
+                if (not isinstance(observation, tuple) or len(observation) != 3
+                        or not all(isinstance(value, str) for value in observation)
+                        or observation[0] not in {"configured", "missing", "misconfigured", "unknown"}):
+                    raise ValueError("Plugin returned an invalid setup observation")
+                state, detail, next_step = observation
+                receipt["diagnostics"].append({"target": "check." + spec.id, "state": state,
+                                               "runtime": "unverified", "path": None,
+                                               "detail": detail, "next_step": next_step})
+                if state != "configured":
+                    findings.append(Finding("doctor.check-setup", f"{spec.id}: {detail}"))
+            if "permissions" in policy:
+                receipt["diagnostics"].append({
+                    "target": "permissions", "state": "configured" if authority_state else "unknown",
+                    "runtime": "unverified", "path": policy_name,
+                    "detail": "Permission zones require an independently trusted baseline; they do not prevent filesystem writes.",
+                    "next_step": "Supply --trust-base from trusted CI or an operator; protect the gate runner and invocation too.",
+                })
         if command not in {"lint-config", "doctor"}:
             reusable = (_reusable_checks(root, check_inputs, receipt["inputs"],
                                          receipt["policy_sha256"], checks)
@@ -324,13 +372,21 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         if _snapshot(context, registry, check_specs=checks, doctor=command == "doctor") != receipt["inputs"]:
             inputs_changed = True
             findings.append(Finding("core.inputs-changed", "Inspected files changed during the run; rerun against stable inputs."))
+        if authority_state is not None and not finish_authority(root, authority_state):
+            inputs_changed = True
+            receipt["permissions"]["status"] = "unverified"
+            findings.append(Finding("core.authority-changed", "Trusted authority or inspected worktree changed during the run."))
+    except AuthorityDenied:
+        pass
     except (Exception, SystemExit, KeyboardInterrupt) as error:
         operational_error = True
+        if "permissions" in receipt:
+            receipt["permissions"]["status"] = "unverified"
         # Exception text may contain TOML values, file content or credentials.
         findings.append(Finding("core.error", f"Unable to complete run ({type(error).__name__}); inspect policy, paths and plugin settings."))
     if input_error:
         operational_error = True
-        findings.append(Finding("core.hook-input", "Invalid hook input or push references; push only the checked-out commit from a clean tree."))
+        findings.append(Finding("core.hook-input", "Invalid hook input, installed authority or push references; use a valid authority pin and push only the checked-out commit from a clean tree."))
     findings.extend(_requirement_findings(receipt, verification_outcomes, not operational_error and not inputs_changed))
     if command == "doctor" and (operational_error or inputs_changed):
         for diagnostic in receipt["diagnostics"]:
@@ -344,6 +400,8 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         persist(root, receipt)
     except (OSError, ValueError):
         receipt["exit_code"], receipt["status"], receipt["receipt"] = 2, "error", None
+        if "permissions" in receipt:
+            receipt["permissions"]["status"] = "unverified"
         for requirement in receipt.get("requirements", []):
             if requirement["status"] == "checks_passed":
                 requirement["status"] = "unverified"

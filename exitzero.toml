@@ -25,8 +25,31 @@ kind = "command"
 paths = ["packages/**/*.py", "scripts/run_tests.py", "tests/test_*.py"]
 [checks.options]
 argv = ["{python}", "scripts/run_tests.py"]
-timeout = 60
+timeout = 120
 
 [harness]
 config_files = ["agent-plugin/.mcp.json"]
 rules = [{id = "completion-evidence", value = "Require runner exit codes and persisted receipts before claiming completion."}]
+
+[[checks]]
+id = "verifier-connections"
+kind = "python.connections"
+paths = ["packages/plugin-verify/src/exitzero_verify/*.py"]
+[checks.options]
+roots = ["packages/plugin-verify/src"]
+
+[[checks.options.connections]]
+source = "packages/plugin-verify/src/exitzero_verify/__init__.py"
+target = "packages/plugin-verify/src/exitzero_verify/connections.py"
+symbol = "check_connections"
+within = "register"
+usage = "argument"
+consumer = "registry.add_check"
+
+[[checks.options.connections]]
+source = "packages/plugin-verify/src/exitzero_verify/__init__.py"
+target = "packages/plugin-verify/src/exitzero_verify/agentwarden.py"
+symbol = "check_agentwarden"
+within = "register"
+usage = "argument"
+consumer = "registry.add_check"

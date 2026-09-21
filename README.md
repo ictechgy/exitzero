@@ -195,6 +195,13 @@ receipt. Missing tests also fail. Existing kits are never overwritten, commands
 are not executed during generation, and the description is stored only in the
 kit's `incident.json`. Review descriptions before committing them.
 
+Add `--profile node` to generate a `.cjs` kit using built-in `node:test` and
+`node:assert/strict`. It installs no packages, runs the explicit test file and
+fingerprints the kit plus Node source/configuration inputs. Both placeholders
+fail until replaced. This profile has no static assertion-quality checker;
+after reviewing and committing the tests, enable `node.test-integrity` against
+a trusted baseline to detect later deletion or suppression.
+
 ```toml
 version = 1
 plugins = ["exitzero_verify", "exitzero_harness"]
@@ -243,7 +250,9 @@ ordering in executable tests. See [the sample](examples/sample).
 | `python.imports` | Unresolved modules and missing statically declared local module symbols |
 | `python.test-quality` | No test cases, empty tests, obvious constant-only assertions |
 | `python.test-integrity` | Test files deleted since a git base ref, removed test cases, new skip/xfail markers, net assertion loss |
+| `python.connections` | Declared imports and call/registration use sites disconnected from the production symbol |
 | `node.test-integrity` | Opt-in Git comparison of literal-named JS/TS tests and skip/focus markers; bounded lexical analysis |
+| `agentwarden.audit` / `agentwarden.scan` | Optional, operator-installed AgentWarden skill integrity and explicit skill/MCP configuration checks |
 | `command` | A configured test/lint command fails or exceeds its timeout |
 | Harness lint | Generated AGENTS drift, installed-hook drift, JSON/TOML config shape errors (Cursor and Claude hook documents, MCP server tables), repeated/conflicting rule IDs |
 
@@ -262,6 +271,17 @@ commit; a missing repo or ref is an operational error. Options
 individual categories. Set `reuse = false` on this check — the baseline lives
 outside hashed file inputs, so unchanged worktree files could otherwise reuse
 a stale pass after the base ref moves.
+
+For projects that need to limit agent self-edits, [permission zones](docs/PERMISSION_ZONES.md)
+compare changed paths with a policy from an independently trusted commit.
+Editable changes can proceed; protected and immutable changes fail with distinct
+decisions in the receipt and ledger. The candidate cannot authorize its own policy
+change. This is a merge-time check; it does not sandbox filesystem writes.
+
+[Declared Python connections](docs/CONNECTION_CHECKS.md) can check that a named
+test calls the production function or that an entry point registers it. Pair
+these static checks with executable behavior tests; they do not prove runtime
+reachability or assertion quality.
 
 ## Commands and outcomes
 
@@ -390,6 +410,13 @@ arbitrary commands. They are local evidence, not signed or tamper-proof
 attestations.
 
 ## Local hooks and CI
+
+For multiple clients, declare `[clients] adapters = ["cursor", "claude", "pre-push"]`
+in the policy, preview with `exitzero policy-pack`, then apply with `--apply`.
+`doctor` diagnoses every declared client. See [policy packs](docs/POLICY_PACKS.md)
+for preserved settings, default failure behavior and independent authority.
+The optional [AgentWarden integration](docs/AGENTWARDEN.md) adds scanner setup
+observations to doctor without invoking the scanner; `check` executes it explicitly.
 
 Gemini users upgrading from 0.5.0 or earlier should rerun
 `exitzero hooks install --adapter gemini` after installing 0.5.1 or newer.

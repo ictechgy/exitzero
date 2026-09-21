@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import subprocess
 import sys
 from urllib.parse import quote
 
@@ -47,23 +48,37 @@ def parser() -> argparse.ArgumentParser:
         child = commands.add_parser(name)
         child.add_argument("--format", choices=("human", "json", "sarif"), default="human")
         if name == "check":
+            child.add_argument("--trust-base", metavar="REF",
+                               help="Enforce permission zones from an independently trusted local Git commit")
             child.add_argument("--reuse", action="store_true",
                                help="Reuse passing check results when a check's selected inputs are unchanged since a prior receipt")
             child.add_argument("--diff", metavar="REF",
                                help="Limit checks to files changed relative to a git ref or range such as origin/main...HEAD")
     doctor = commands.add_parser("doctor", help="Diagnose project policy and hook setup without running checks")
     doctor.add_argument("--format", choices=("human", "json"), default="human")
+    doctor.add_argument("--trust-base", metavar="REF", help="Inspect permission zones from a trusted local commit")
     doctor.add_argument("--adapter", choices=ADAPTERS,
                         help="Require this adapter to be configured; other adapters remain optional")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
     installer = hooks.add_parser("install")
     installer.add_argument("--adapter", choices=ADAPTERS, default="cursor")
+    installer.add_argument("--trust-base", metavar="REF", help="Operator-selected local authority commit for the hook")
     hook_run = hooks.add_parser("run")
     hook_run.add_argument("--adapter", choices=("generic", *ADAPTER_EVENTS), default="generic")
     hook_run.add_argument("--slot", choices=sorted(HOOK_SLOTS), default="CI")
     hook_run.add_argument("--event", choices=sorted({event for events in ADAPTER_EVENTS.values() for event in events}),
                         default="stop")
     hook_run.add_argument("--format", choices=("human", "json"), default="human")
+    authority = hook_run.add_mutually_exclusive_group()
+    authority.add_argument("--trust-base", metavar="REF", help="Trusted local Git commit for permission zones")
+    authority.add_argument("--use-installed-authority", action="store_true",
+                           help="Use the operator pin in the local hook installation manifest")
+    pack = commands.add_parser("policy-pack", help="Preview or apply policy-derived AGENTS and client hooks")
+    mode = pack.add_mutually_exclusive_group()
+    mode.add_argument("--apply", action="store_true", help="Apply the fully preflighted plan")
+    mode.add_argument("--check", action="store_true", help="Exit 1 if generated configuration would change; never write")
+    pack.add_argument("--trust-base", metavar="REF", help="Operator-selected local authority commit for generated hooks")
+    pack.add_argument("--format", choices=("human", "json"), default="human")
     report = commands.add_parser("report")
     report.add_argument("--run-id", help="Select one persisted receipt instead of the latest run")
     report.add_argument("--format", choices=("human", "json", "sarif", "intoto"), default="human")
@@ -267,10 +282,22 @@ def main(argv: list[str] | None = None) -> int:
         receipt = run(root, args.policy, args.command,
                       reuse=args.command == "check" and args.reuse,
                       diff=args.diff if args.command == "check" else None,
-                      doctor_adapter=args.adapter if args.command == "doctor" else None)
+                      doctor_adapter=args.adapter if args.command == "doctor" else None,
+                      trust_base=getattr(args, "trust_base", None))
         emit(receipt, args.format)
         return receipt["exit_code"]
     if args.command == "hooks" and args.hook_command == "run":
+        hook_trust_base, trust_error = args.trust_base, False
+        if args.use_installed_authority:
+            from .hooks import _manifest
+            from .authority import resolve
+            try:
+                selected = _manifest(root).get("trust_base")
+                if selected is None:
+                    raise ValueError("Installed hook authority is missing")
+                hook_trust_base = resolve(root, selected)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                trust_error = True
         events = ADAPTER_EVENTS.get(args.adapter)
         if events is not None:
             if args.event not in events:
@@ -284,10 +311,10 @@ def main(argv: list[str] | None = None) -> int:
                         raise ValueError("Invalid Cursor payload")
                 except (ValueError, OSError, RecursionError):
                     # Still execute and persist the actual gate outcome for every invocation.
-                    receipt = run(root, args.policy, "check", events[args.event], input_error=True)
+                    receipt = run(root, args.policy, "check", events[args.event], input_error=True, trust_base=hook_trust_base, authority_error=trust_error)
                     print(json.dumps({"error": "Invalid Cursor JSON input", "receipt": receipt["receipt"]}))
                     return 2
-                receipt = run(root, args.policy, "check", events[args.event])
+                receipt = run(root, args.policy, "check", events[args.event], input_error=trust_error, trust_base=hook_trust_base, authority_error=trust_error)
                 print(json.dumps(cursor_response(receipt, args.event, payload)))
                 # Cursor reads the JSON protocol; generic adapters expose unchanged gate codes.
                 return 0 if receipt["exit_code"] != 2 else 2
@@ -298,13 +325,13 @@ def main(argv: list[str] | None = None) -> int:
                 if not isinstance(payload, dict):
                     raise ValueError("Invalid hook payload")
             except (ValueError, OSError, RecursionError):
-                receipt = run(root, args.policy, "check", events[args.event], input_error=True)
+                receipt = run(root, args.policy, "check", events[args.event], input_error=True, trust_base=hook_trust_base, authority_error=trust_error)
                 if args.adapter == "copilot":
                     print(json.dumps(copilot_response(receipt, args.event)))
                     return 0
                 print(json.dumps({"error": f"Invalid {args.adapter} JSON input", "receipt": receipt["receipt"]}))
                 return 2
-            receipt = run(root, args.policy, "check", events[args.event])
+            receipt = run(root, args.policy, "check", events[args.event], input_error=trust_error, trust_base=hook_trust_base, authority_error=trust_error)
             if args.adapter == "copilot":
                 print(json.dumps(copilot_response(receipt, args.event)))
                 return 0
@@ -318,7 +345,7 @@ def main(argv: list[str] | None = None) -> int:
                 push_error = len(payload) > 1024 * 1024 or not valid_push_input(root, payload)
             except (OSError, UnicodeError):
                 push_error = True
-        receipt = run(root, args.policy, "check", args.slot, input_error=push_error)
+        receipt = run(root, args.policy, "check", args.slot, input_error=push_error or trust_error, trust_base=hook_trust_base, authority_error=trust_error)
         emit(receipt, args.format)
         return receipt["exit_code"]
     try:
@@ -366,8 +393,22 @@ def main(argv: list[str] | None = None) -> int:
             emit(receipt, args.format, receipt_bytes=raw)
             return 0
         policy = load_policy(path)
+        if args.command == "policy-pack":
+            from .pack import compile_pack
+            report = compile_pack(root, path, policy, apply=args.apply, trust_base=args.trust_base)
+            report["exit_code"] = int(args.check and any(change["state"] != "unchanged" for change in report["changes"]))
+            if args.format == "json":
+                print(json.dumps(report, ensure_ascii=False, sort_keys=True))
+            else:
+                for change in report["changes"]:
+                    print(f"{change['state']}: {_scrub(change['path'])}")
+                for limitation in report["limitations"]:
+                    print(_scrub(limitation))
+                if report.get("receipt"):
+                    print("Plan receipt: " + report["receipt"])
+            return report["exit_code"]
         if args.command == "hooks":
-            relative = install(root, path, args.adapter)
+            relative = install(root, path, args.adapter, trust_base=args.trust_base)
             print("Installed " + relative + ". Run lint-config to verify configuration.")
             note = HOOK_MANAGED_NOTE.get(args.adapter, "")
             if note:

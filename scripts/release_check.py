@@ -369,6 +369,141 @@ def _verify_node_integrity(run: ReleaseRun, cli: Path, temporary: Path, env: dic
         run.archive_receipts("node-integrity", repo)
 
 
+def _verify_policy_pack_and_authority(run: ReleaseRun, cli: Path, temporary: Path,
+                                      env: dict[str, str]) -> dict[str, Any]:
+    """Exercise installed policy packing, trusted authority and connections."""
+    repo = temporary / "policy-authority"
+    repo.mkdir()
+    (repo / "app.py").write_text("from lib import handler\nhandler()\n", encoding="utf-8")
+    (repo / "lib.py").write_text("def handler():\n    return 1\n", encoding="utf-8")
+    (repo / "tests").mkdir()
+    (repo / "tests/test_app.py").write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
+    init = run.command("authority-init", [str(cli), "--root", str(repo), "init", "--profile", "python"], repo, env)
+    if init.returncode:
+        raise ReleaseFailure("installed authority scenario initialization failed")
+    policy_text = '''version = 1
+plugins = ["verify", "harness"]
+
+[[checks]]
+id = "syntax"
+kind = "python.syntax"
+paths = ["app.py", "lib.py", "tests/**/*.py"]
+
+[[checks]]
+id = "connections"
+kind = "python.connections"
+paths = ["app.py"]
+[checks.options]
+roots = ["."]
+connections = [{source = "app.py", target = "lib.py", symbol = "handler", within = "<module>", usage = "call"}]
+
+[harness]
+config_files = []
+rules = []
+
+[clients]
+adapters = ["cursor", "pre-push"]
+
+[permissions]
+editable = ["app.py"]
+protected = ["tests/**"]
+immutable = [".cursor/**", "AGENTS.md"]
+'''
+    policy = repo / "exitzero.toml"
+    policy.write_text(policy_text, encoding="utf-8")
+    sync = run.command("authority-sync-policy", [str(cli), "--root", str(repo), "init", "--sync"], repo, env)
+    if sync.returncode:
+        raise ReleaseFailure("installed authority policy synchronization failed")
+    _git(run, repo, env, ["init", "-q"], "authority-git-init")
+    _git(run, repo, env, ["add", "."], "authority-git-add-a")
+    baseline_a = _commit(run, repo, env, "authority baseline A", "authority-git-commit-a", 0).stdout
+    baseline_a = _head(run, repo, env, "authority-head-a")
+
+    def pack(label: str, base: str) -> dict[str, Any]:
+        process = run.command(label, [str(cli), "--root", str(repo), "policy-pack", "--apply",
+                                      "--trust-base", base, "--format", "json"], repo, env)
+        if process.returncode != 0:
+            raise ReleaseFailure(f"{label} exited {process.returncode}")
+        try:
+            value = json.loads(process.stdout)
+        except json.JSONDecodeError as error:
+            raise ReleaseFailure(f"{label} did not emit JSON: {type(error).__name__}") from error
+        if not isinstance(value, dict) or value.get("applied") is not True:
+            raise ReleaseFailure(f"{label} did not report an applied pack")
+        return value
+
+    pack_a = pack("authority-pack-a", baseline_a)
+    cursor = repo / ".cursor/hooks.json"
+    cursor_a = cursor.read_bytes()
+    if b"--use-installed-authority" not in cursor_a or (repo / ".git/hooks/pre-commit").exists():
+        raise ReleaseFailure("installed pack did not produce the expected cursor authority hook set")
+    _git(run, repo, env, ["add", "."], "authority-git-add-b")
+    _commit(run, repo, env, "authority generated hooks", "authority-git-commit-b", 0)
+    baseline_b = _head(run, repo, env, "authority-head-b")
+    pack_b = pack("authority-pack-b", baseline_b)
+    changed_pack_paths = sorted(change["path"] for change in pack_b.get("changes", [])
+                                 if isinstance(change, dict) and change.get("state") != "unchanged")
+    if changed_pack_paths != [".exitzero/hooks.json"] or cursor.read_bytes() != cursor_a:
+        raise ReleaseFailure("authority repack changed more than the installed manifest")
+
+    cases: list[dict[str, Any]] = []
+
+    def evidence(name: str, receipt: dict[str, Any]) -> None:
+        permissions = receipt.get("permissions", {})
+        changes = permissions.get("changes", []) if isinstance(permissions, dict) else []
+        cases.append({"name": name, "run_id": receipt.get("run_id"),
+                      "status": permissions.get("status") if isinstance(permissions, dict) else None,
+                      "changes": [{key: change.get(key) for key in ("path", "zone", "decision", "change")}
+                                  for change in changes if isinstance(change, dict) and "path" in change]})
+
+    editable_source = "from lib import handler\nhandler()\n# editable\n"
+    (repo / "app.py").write_text(editable_source, encoding="utf-8")
+    accepted = _json_cli(run, cli, repo, env, ["check", "--trust-base", baseline_b], "authority-editable", 0)
+    run.archive_receipts("authority-editable", repo)
+    evidence("editable", accepted)
+    (repo / "app.py").write_text("from lib import handler\n# registration removed\n", encoding="utf-8")
+    deleted_registration = _json_cli(run, cli, repo, env, ["check", "--trust-base", baseline_b],
+                                      "authority-connection-deleted", 1)
+    run.archive_receipts("authority-connection-deleted", repo)
+    if not any(finding.get("rule") == "connections" for finding in deleted_registration.get("findings", [])):
+        raise ReleaseFailure("installed python.connections did not reject deleted registration")
+    evidence("connection-deleted", deleted_registration)
+    (repo / "app.py").write_text(editable_source, encoding="utf-8")
+    (repo / "tests/new.py").write_text("value = 1\n", encoding="utf-8")
+    protected = _json_cli(run, cli, repo, env, ["check", "--trust-base", baseline_b], "authority-protected", 1)
+    run.archive_receipts("authority-protected", repo)
+    if protected.get("checks") or not any(finding.get("rule") == "core.permission-protected"
+                                          for finding in protected.get("findings", [])):
+        raise ReleaseFailure("protected authority change was not rejected before checks")
+    evidence("protected", protected)
+    (repo / "tests/new.py").unlink()
+    original_policy = policy.read_text(encoding="utf-8")
+    weakened_policy = original_policy.split("\n[permissions]\n", 1)[0] + "\n"
+    policy.write_text(weakened_policy, encoding="utf-8")
+    weakened = _json_cli(run, cli, repo, env, ["check", "--trust-base", baseline_b], "authority-weakened-policy", 1)
+    run.archive_receipts("authority-weakened-policy", repo)
+    if weakened.get("checks") or not any(finding.get("rule") == "core.permission-immutable"
+                                         for finding in weakened.get("findings", [])):
+        raise ReleaseFailure("candidate policy weakening was not rejected before plugins")
+    evidence("weakened-policy", weakened)
+    policy.write_text(original_policy, encoding="utf-8")
+    repaired = _json_cli(run, cli, repo, env, ["check", "--trust-base", baseline_b], "authority-repaired", 0)
+    run.archive_receipts("authority-repaired", repo)
+    evidence("repaired", repaired)
+    doctor = _json_cli(run, cli, repo, env, ["doctor", "--trust-base", baseline_b], "authority-doctor", 0)
+    run.archive_receipts("authority-doctor", repo)
+    states = {item.get("target"): item.get("state") for item in doctor.get("diagnostics", [])
+              if isinstance(item, dict)}
+    if states.get("cursor") != "configured" or states.get("pre-push") != "configured":
+        raise ReleaseFailure("installed doctor did not recognize declared adapters")
+    return {"name": "installed-policy-pack-authority-connections", "status": "passed",
+            "pack_a": {"applied": pack_a.get("applied")},
+            "pack_b_changed_paths": changed_pack_paths,
+            "cursor_hook_sha256": hashlib.sha256(cursor_a).hexdigest(),
+            "cases": cases,
+            "doctor": {"cursor": states.get("cursor"), "pre-push": states.get("pre-push")}}
+
+
 def run(wheel: Path) -> tuple[dict[str, Any], Path]:
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:10]
     artifact = _artifact_root(run_id)
@@ -461,6 +596,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
             if not release.receipts:
                 raise ReleaseFailure("no gate receipts were archived")
             node_integrity = _verify_node_integrity(release, cli, temporary_root, env)
+            policy_authority = _verify_policy_pack_and_authority(release, cli, temporary_root, env)
             summary["checks"] = [
                 {"name": "installed-cli-init", "status": "passed"},
                 {"name": "installed-check-receipt-equality", "status": "passed", "exit_code": check["exit_code"]},
@@ -474,6 +610,7 @@ def run(wheel: Path) -> tuple[dict[str, Any], Path]:
                 {"name": "git-hook-repaired-commit", "status": "passed", "exit_code": repaired.returncode,
                  "hook_slot": repaired_receipt["hook_slot"]},
                 node_integrity,
+                policy_authority,
             ]
             summary["status"] = "passed"
     except Exception as error:

@@ -7,6 +7,7 @@ import hashlib
 import os
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import tempfile
 
 EXCLUDED = frozenset({".git", ".venv", "venv", "node_modules", "__pycache__", ".exitzero", "build", "dist"})
@@ -16,10 +17,46 @@ _HASH_CHUNK = 1 << 20
 _WILDCARD = re.compile(r"[*?[]")
 
 
-def sha256_file(path: Path) -> str:
+def open_regular(path: Path, *, root: Path | None = None):
+    """Open regular data without following candidate directory/leaf symlinks.
+
+    On platforms with dir_fd, a trusted root descriptor anchors each component;
+    renamed parents cannot redirect the read outside that root. Nonblocking open
+    lets us reject a swapped FIFO before attempting a read.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    directory = None
+    descriptor = None
+    try:
+        if root is not None and os.open in os.supports_dir_fd:
+            relative = path.relative_to(root)
+            validate_relative(relative.as_posix())
+            directory = os.open(root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            for part in relative.parts[:-1]:
+                child = os.open(part, flags | getattr(os, "O_DIRECTORY", 0), dir_fd=directory)
+                os.close(directory)
+                directory = child
+            descriptor = os.open(relative.parts[-1], flags, dir_fd=directory)
+        else:
+            if path.is_symlink():
+                raise ValueError("Symlinked inputs are not regular files")
+            descriptor = os.open(path, flags)
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise ValueError("Input must be a regular file")
+        stream = os.fdopen(descriptor, "rb")
+        descriptor = None
+        return stream
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        if directory is not None:
+            os.close(directory)
+
+
+def sha256_file(path: Path, *, root: Path | None = None) -> str:
     """Hash a file in chunks so large inputs never load fully into memory."""
     digest = hashlib.sha256()
-    with path.open("rb") as stream:
+    with open_regular(path, root=root) as stream:
         for chunk in iter(lambda: stream.read(_HASH_CHUNK), b""):
             digest.update(chunk)
     return digest.hexdigest()

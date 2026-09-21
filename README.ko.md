@@ -14,6 +14,18 @@ Python 코드와 에이전트 설정을 다룹니다. Node 프로필로 기존 �
 **Cursor stop은 수정 요청을 보내는 훅입니다. 머지 보호는 필수 CI로 설정하세요.**
 아래 실패 데모를 실행한 뒤 [필수 CI 설정](docs/HOOKS.md#required-ci-setup)을 연결하세요.
 
+0.6.0에서는 [연결성 검사](docs/CONNECTION_CHECKS.md)로 선언한 테스트·등록 코드가
+제품 구현을 실제로 참조하는지 정적으로 확인합니다. [권한 구역](docs/PERMISSION_ZONES.md)은
+외부에서 지정한 신뢰할 기준 커밋으로 수정 가능·보호·불변 경로를 판정하고 영수증과
+장부에 남깁니다. 에이전트가 작업 중인 정책을 고쳐 자기 변경을 허용할 수 없습니다.
+
+[정책 팩](docs/POLICY_PACKS.md)은 `[clients] adapters = ["cursor", "claude", "pre-push"]`
+선언을 받아 AGENTS와 여러 훅의 변경을 먼저 보여 줍니다. `exitzero policy-pack --apply`로
+적용하고 `exitzero doctor`로 선언한 클라이언트를 진단합니다. 선택 기능인
+[AgentWarden 연동](docs/AGENTWARDEN.md)은 기존 정적 검사기를 사용하며, doctor에서
+검사기나 MCP 서버를 실행하지 않습니다. 사고 키트에는 `--profile node`를 추가해
+패키지 설치 없이 Node 내장 테스트 두 개를 만들 수 있습니다.
+
 ## 설치
 
 Python 3.11 이상이 필요합니다. 런타임과 테스트는 표준 라이브러리만
