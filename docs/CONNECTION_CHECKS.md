@@ -68,3 +68,8 @@ executable project checks. Preceding exceptions/returns and interpreter options
 can also prevent a syntactically connected call from executing. Native hook/gateway
 events are needed to observe intermediate tool actions; this check does not
 invent an execution trace from a final diff.
+
+The [riskgate policy-pack pilot](PILOT_POLICY_PACK.md#value-beyond-a-green-test-suite)
+records both sides: an equivalent-literal test rewrite keeps the real upstream
+suite green but fails its declared production connection; a valid upstream
+`with`-body wrapper also fails because it is outside the supported static scope.

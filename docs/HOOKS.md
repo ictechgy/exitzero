@@ -289,6 +289,12 @@ did not establish a general headless limitation; the previous blanket warning
 has been superseded by this successful run. Required CI remains the merge barrier.
 See [the scoped live evidence](LIVE_CLIENT_VALIDATION.md#antigravity-follow-up).
 
+A separate [0.6.0 riskgate session](PILOT_POLICY_PACK.md#fresh-native-antigravity-evidence)
+on 2026-09-21 verified headless native Stop failure→model repair→pass with a
+trusted policy baseline and 12 CLI contract tests. It used a local confinement
+wrapper around the published package; full upstream tests were verified
+separately offline. This does not extend the earlier GUI/client coverage.
+
 ## GitHub Copilot CLI
 
 ```sh

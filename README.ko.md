@@ -19,6 +19,10 @@ Python 코드와 에이전트 설정을 다룹니다. Node 프로필로 기존 �
 외부에서 지정한 신뢰할 기준 커밋으로 수정 가능·보호·불변 경로를 판정하고 영수증과
 장부에 남깁니다. 에이전트가 작업 중인 정책을 고쳐 자기 변경을 허용할 수 없습니다.
 
+[0.6.0 실프로젝트 검증](docs/PILOT_POLICY_PACK.md)에서는 정상 수정 통과, 보호 파일
+차단, 테스트가 통과해도 실제 함수 호출이 사라진 변경을 잡는 사례를 확인했습니다.
+분석하지 못하는 `with` 내부 호출과 agy의 실제 수정→재검사 결과도 함께 기록했습니다.
+
 [정책 팩](docs/POLICY_PACKS.md)은 `[clients] adapters = ["cursor", "claude", "pre-push"]`
 선언을 받아 AGENTS와 여러 훅의 변경을 먼저 보여 줍니다. `exitzero policy-pack --apply`로
 적용하고 `exitzero doctor`로 선언한 클라이언트를 진단합니다. 선택 기능인
