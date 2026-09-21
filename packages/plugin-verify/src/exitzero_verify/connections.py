@@ -539,20 +539,28 @@ def _check_one(context: Context, spec: CheckSpec, connection: Connection,
         return _connection_finding(spec, "Connection target binding is shadowed", connection.source,
                                    bindings[0].line)
     calls: list[ast.Call] = []
+    unsupported_calls: list[ast.Call] = []
     for node, conditional in _walk_scope_context(statements):
-        if conditional:
-            continue
         if not isinstance(node, ast.Call):
             continue
+        matches = False
         if connection.usage == "call" and any(_chain(node.func) == binding.expression
                                                for binding in valid_bindings):
-            calls.append(node)
+            matches = True
         elif connection.usage == "argument" and _chain(node.func) == tuple(connection.consumer.split(".")):
             values = [*node.args, *(keyword.value for keyword in node.keywords)]
             if any(_chain(value) == binding.expression
                    for value in values for binding in valid_bindings):
-                calls.append(node)
+                matches = True
+        if matches:
+            (unsupported_calls if conditional else calls).append(node)
     if not calls:
+        if unsupported_calls:
+            first = min(unsupported_calls, key=lambda node: (node.lineno, node.col_offset))
+            return _connection_finding(
+                spec, "Connection has a matching use only in unsupported conditional or repeated code. "
+                "Verify this path with a behavior/contract test in a command check; "
+                "review the connection declaration.", connection.source, first.lineno)
         return _connection_finding(spec, "Connection has no matching use in the selected scope", connection.source)
     return None
 

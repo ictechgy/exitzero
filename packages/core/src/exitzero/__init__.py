@@ -1,3 +1,3 @@
 """Policy-driven verification for AI-assisted coding teams."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
