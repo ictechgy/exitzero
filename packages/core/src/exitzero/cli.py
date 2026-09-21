@@ -7,7 +7,6 @@ import re
 import shlex
 import subprocess
 import sys
-import uuid
 from urllib.parse import quote
 
 from . import __version__
@@ -398,10 +397,6 @@ def main(argv: list[str] | None = None) -> int:
             from .pack import compile_pack
             report = compile_pack(root, path, policy, apply=args.apply, trust_base=args.trust_base)
             report["exit_code"] = int(args.check and any(change["state"] != "unchanged" for change in report["changes"]))
-            if args.apply:
-                relative = f".exitzero/packs/{uuid.uuid4().hex}.json"
-                report["receipt"] = relative
-                write_atomic(safe_path(root, relative), json.dumps(report, sort_keys=True, indent=2) + "\n")
             if args.format == "json":
                 print(json.dumps(report, ensure_ascii=False, sort_keys=True))
             else:

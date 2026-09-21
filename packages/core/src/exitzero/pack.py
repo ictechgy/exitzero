@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import uuid
 
 from .files import safe_path, write_atomic
 from .hooks import ADAPTER_EVENTS, _manifest, _prepare_target, _resolve_trust_base, prepare_install
@@ -150,12 +151,6 @@ def compile_pack(root: Path, policy_path: Path, policy: dict, *, apply: bool = F
     _append_target(targets, manifest_target, manifest_content,
                    manifest_target["before_mode"] if manifest_target["before_mode"] is not None else 0o644)
 
-    if apply:
-        if (not _same_snapshot(root, policy_target)
-                or not all(_same_snapshot(root, target) for target in targets)):
-            raise RuntimeError("Pack changed during preparation; review concurrent edits and retry")
-        _publish(root, targets)
-
     changes = []
     for target in targets:
         before = target["before"]
@@ -164,9 +159,23 @@ def compile_pack(root: Path, policy_path: Path, policy: dict, *, apply: bool = F
         changes.append({"path": target["relative"],
                         "state": "unchanged" if before == after and not mode_changed else "update" if before is not None else "create",
                         "before_sha256": _hash(before), "after_sha256": _hash(after)})
-    return {"schema_version": 1, "applied": bool(apply), "changes": changes,
+    report = {"schema_version": 1, "applied": bool(apply), "changes": changes,
             "adapters": adapters,
             "limitations": [
                 "Client trust prompts and hook execution modes remain host-specific; require CI for merge protection.",
                 "Only declared project-local adapters are managed; global settings, CI configuration and network state are unchanged.",
             ]}
+    if apply:
+        relative = f".exitzero/packs/{uuid.uuid4().hex}.json"
+        receipt_target = _target(root, relative)
+        if receipt_target["before"] is not None:
+            raise ValueError("Policy pack receipt already exists")
+        report.update(receipt=relative, exit_code=0)
+        # The success receipt is the last publication in the same preflight and
+        # restoration set. Its content does not include a self-referential hash.
+        _append_target(targets, receipt_target, json.dumps(report, sort_keys=True, indent=2) + "\n", 0o600)
+        if (not _same_snapshot(root, policy_target)
+                or not all(_same_snapshot(root, target) for target in targets)):
+            raise RuntimeError("Pack changed during preparation; review concurrent edits and retry")
+        _publish(root, targets)
+    return report

@@ -195,6 +195,39 @@ class ConnectionTests(unittest.TestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("no matching use", findings[0].message)
 
+    def test_unreachable_else_and_zero_iteration_loop_do_not_connect(self):
+        root = self.write_pair(
+            "from lib import handler\n"
+            "if True:\n"
+            "    pass\n"
+            "else:\n"
+            "    handler()\n")
+        findings = check_connections(self.context(root), self.spec(self.connection()))
+        self.assertEqual(len(findings), 1)
+        self.assertIn("no matching use", findings[0].message)
+        root.joinpath("app.py").write_text(
+            "from lib import handler\n"
+            "for item in ():\n"
+            "    handler()\n", encoding="utf-8")
+        findings = check_connections(self.context(root), self.spec(self.connection()))
+        self.assertEqual(len(findings), 1)
+        self.assertIn("no matching use", findings[0].message)
+
+    def test_try_match_and_with_bodies_do_not_establish_unconditional_use(self):
+        cases = (
+            "try:\n    pass\nexcept Exception:\n    handler()\n",
+            "try:\n    pass\nexcept Exception:\n    pass\nelse:\n    handler()\n",
+            "try:\n    pass\nfinally:\n    handler()\n",
+            "match value:\n    case _:\n        handler()\n",
+            "with context():\n    handler()\n",
+        )
+        for body in cases:
+            with self.subTest(body=body):
+                root = self.write_pair("from lib import handler\n" + body)
+                findings = check_connections(self.context(root), self.spec(self.connection()))
+                self.assertEqual(len(findings), 1)
+                self.assertIn("no matching use", findings[0].message)
+
     def test_duplicate_scope_names_are_ambiguous(self):
         root = self.write_pair(
             "from lib import handler\n"

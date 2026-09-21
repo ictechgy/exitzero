@@ -308,20 +308,45 @@ def _walk_scope(statements: Iterable[ast.stmt]) -> Iterable[ast.AST]:
 
 
 def _walk_scope_context(statements: Iterable[ast.stmt]) -> Iterable[tuple[ast.AST, bool]]:
-    """Walk one scope and mark nodes beneath conditional ``if`` branches."""
+    """Walk one scope while marking conditional and repeated regions."""
+
+    def children(node: ast.AST, conditional: bool) -> list[tuple[ast.AST, bool]]:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            return []
+        if isinstance(node, ast.If):
+            return ([(node.test, conditional)]
+                    + [(child, True) for child in (*node.body, *node.orelse)])
+        if isinstance(node, (ast.For, ast.AsyncFor)):
+            return ([(node.iter, conditional), (node.target, conditional)]
+                    + [(child, True) for child in (*node.body, *node.orelse)])
+        if isinstance(node, ast.While):
+            return ([(node.test, conditional)]
+                    + [(child, True) for child in (*node.body, *node.orelse)])
+        if isinstance(node, (ast.Try, ast.TryStar)):
+            return ([(child, conditional) for child in node.body]
+                    + [(child, True) for handler in node.handlers for child in (handler,)]
+                    + [(child, True) for child in (*node.orelse, *node.finalbody)])
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            items = [(child, conditional) for item in node.items
+                     for child in (item.context_expr, item.optional_vars) if child is not None]
+            return items + [(child, True) for child in node.body]
+        if isinstance(node, ast.Match):
+            return ([(node.subject, conditional)]
+                    + [(case, True) for case in node.cases])
+        if isinstance(node, ast.BoolOp):
+            return [(value, conditional if index == 0 else True)
+                    for index, value in enumerate(node.values)]
+        if isinstance(node, ast.IfExp):
+            return [(node.test, conditional), (node.body, True), (node.orelse, True)]
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            return [(child, True) for child in ast.iter_child_nodes(node)]
+        return [(child, conditional) for child in ast.iter_child_nodes(node)]
 
     stack = [(statement, False) for statement in reversed(list(statements))]
     while stack:
         node, conditional = stack.pop()
         yield node, conditional
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
-            continue
-        if isinstance(node, ast.If):
-            stack.extend((child, conditional) for child in reversed(list(node.orelse)))
-            stack.extend((child, True) for child in reversed(list(node.body)))
-            stack.append((node.test, conditional))
-            continue
-        stack.extend((child, conditional) for child in reversed(list(ast.iter_child_nodes(node))))
+        stack.extend(reversed(children(node, conditional)))
 
 
 def _scope_imports(statements: Iterable[ast.stmt]) -> tuple[list[ast.AST], set[str], bool, bool]:

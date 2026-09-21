@@ -75,13 +75,60 @@ class PolicyPackTests(unittest.TestCase):
         policy = self.policy()
         applied = compile_pack(self.root, self.policy_path, policy, apply=True)
         self.assertTrue(applied["applied"])
-        before = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        before = {path: path.read_bytes() for path in self.root.rglob("*")
+                  if path.is_file() and not path.is_relative_to(self.root / ".exitzero/packs")}
         repeated = compile_pack(self.root, self.policy_path, policy, apply=True)
         self.assertTrue(all(change["state"] == "unchanged" for change in repeated["changes"]))
-        after = {path: path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
+        after = {path: path.read_bytes() for path in self.root.rglob("*")
+                 if path.is_file() and not path.is_relative_to(self.root / ".exitzero/packs")}
         self.assertEqual(before, after)
         self.assertEqual(json.loads(cursor.read_text())["hooks"]["stop"][0]["command"], "foreign")
         self.assertIn("Manual project guidance.", agents.read_text())
+        self.assertNotEqual(applied["receipt"], repeated["receipt"])
+        self.assertEqual(repeated, json.loads((self.root / repeated["receipt"]).read_text()))
+
+    def test_blocked_receipt_parent_causes_zero_configuration_writes(self):
+        policy = self.policy()
+        (self.root / ".exitzero").mkdir()
+        (self.root / ".exitzero/packs").write_text("operator file")
+        with self.assertRaises(ValueError):
+            compile_pack(self.root, self.policy_path, policy, apply=True)
+        self.assertFalse((self.root / "AGENTS.md").exists())
+        self.assertFalse((self.root / ".cursor").exists())
+        self.assertFalse((self.root / ".exitzero/hooks.json").exists())
+        self.assertEqual((self.root / ".exitzero/packs").read_text(), "operator file")
+
+    def test_receipt_publication_failure_restores_existing_configuration(self):
+        policy = self.policy()
+        agents = self.root / "AGENTS.md"
+        agents.write_text("Original manual guidance\n")
+        import exitzero.pack as pack
+        real_write = pack.write_atomic
+        def fail_receipt(path, content):
+            if path.parent.name == "packs":
+                raise OSError("simulated receipt storage failure")
+            return real_write(path, content)
+        with mock.patch("exitzero.pack.write_atomic", side_effect=fail_receipt):
+            with self.assertRaisesRegex(RuntimeError, "rolled back"):
+                compile_pack(self.root, self.policy_path, policy, apply=True)
+        self.assertEqual(agents.read_text(), "Original manual guidance\n")
+        self.assertFalse((self.root / ".cursor/hooks.json").exists())
+        self.assertFalse((self.root / ".exitzero/hooks.json").exists())
+        self.assertEqual(list((self.root / ".exitzero/packs").glob("*.json")), [])
+
+    def test_receipt_mode_failure_removes_success_receipt_and_restores_outputs(self):
+        policy = self.policy()
+        real_chmod = Path.chmod
+        def fail_mode(path, mode, *args, **kwargs):
+            if path.parent.name == "packs":
+                raise OSError("simulated receipt mode failure")
+            return real_chmod(path, mode, *args, **kwargs)
+        with mock.patch.object(Path, "chmod", fail_mode):
+            with self.assertRaisesRegex(RuntimeError, "rolled back"):
+                compile_pack(self.root, self.policy_path, policy, apply=True)
+        self.assertFalse((self.root / "AGENTS.md").exists())
+        self.assertFalse((self.root / ".cursor/hooks.json").exists())
+        self.assertEqual(list((self.root / ".exitzero/packs").glob("*.json")), [])
 
     def test_later_invalid_document_causes_zero_early_writes(self):
         agents = self.root / "AGENTS.md"
