@@ -6,16 +6,67 @@ baseline. It verifies 12 real CLI contracts in a confined gate subprocess;
 the full upstream suite is separate offline evidence. The records below retain
 their original package versions and dates.
 
-Run date: 2026-09-20. Claude Code and Gemini CLI model-driven repair loops remain
-**unverified** because the configured accounts rejected their live requests.
-The Gemini component test below verified a separate adapter fix. Subsequent
+On 2026-09-22 KST, Claude Code completed a native Stop repair loop with published
+exitzero 0.6.1. Gemini CLI again rejected the configured account before model
+execution. Its model-driven repair loop remains **unverified**. The earlier
+Gemini component test below verified a separate adapter fix. Subsequent
 Antigravity validation passed in interactive and headless modes. Devin CLI passed
 in an interactive sandbox with one approved fixture edit. Protected OpenCode and
 Zcode backend sessions also completed advisory MCP repair loops with Qwen and
 GLM respectively. Kimi subsequently completed its real-model MCP loop after an
 isolated native login. These are separate client results.
 
-## Actual CLI attempts
+## Claude and Gemini retry with 0.6.1
+
+Run date: 2026-09-22 KST (2026-09-21 UTC). Both clients used fresh synthetic
+projects and an offline installation of the retained public 0.6.1 wheel. All
+25 runtime Python files matched the wheel and source. Seven scope-guard controls
+per client passed, including outside-path, symlink, policy-edit and shell denial.
+These are tool-scope controls, not a general client privacy certification.
+
+| Client | Native result | Evidence |
+| --- | --- | --- |
+| Claude Code 2.1.278, `claude-sonnet-5` | Failed Stop → source read/edit → passing Stop; client exit 0 in 6.54 seconds | Two gate receipts, one session, four model/tool turns |
+| Gemini CLI 0.44.1 | Exit 1 in 4.90 seconds; `IneligibleTierError` / `UNSUPPORTED_CLIENT` | No model events, tool callbacks or AfterAgent receipts; source unchanged |
+
+Claude first answered `READY`. Its native Stop hook produced receipt
+`9ff428220bf74f0e9d48a61264ef3792` (exit 1), with only the seeded syntax error.
+The model read `src/broken.py`, repaired `def answer(:` to `def answer():`, and
+answered `REPAIRED`. The second native Stop produced
+`e5b6184b18ff4358b40a379f4b2b35f8` (exit 0). The final source AST matched the
+expected `answer()` returning 42; the gate itself only checked syntax and
+configuration, without executing the source.
+
+Both Stop callbacks and both file-tool callbacks carried the same session hash.
+Receipt input hashes matched the before/after source and unchanged policy,
+AGENTS and hook configuration. The native result reported `is_error: false`
+and `terminal_reason: completed`. The controller did not repair the source or
+invoke the gate during the session. The model used the hook's diagnostic summary;
+it did not separately read the referenced JSON receipt. This proves the native
+repair loop, not adherence to that additional prompt instruction.
+
+Claude ran in print/restricted mode with explicit generated settings, Read/Edit
+tools, an additional PreToolUse path guard, no MCP servers, and six-turn / USD 1
+caps. Gemini used read/edit tools, BeforeTool guards, no enabled MCP servers or
+extensions, and an eight-turn cap. Existing native logins were used; the driver
+did not inspect or copy credential files or edit global client settings.
+
+An offline verifier matched saved receipts to the original files, checked source,
+configuration and installed-runtime hashes, and checked the native event sequence
+without another model call. The original controller report is retained: it had
+required an explicit receipt read and incorrectly treated normal `seven_day`
+usage metadata as a quota rejection. The final result above uses the verified
+native completion evidence and records the unobserved receipt read separately.
+Gemini's first configuration preflight rejected an empty JSON override before
+any model request; replacing it with a task-local `{}` file allowed the single
+live retry that reproduced the account error.
+
+Local evidence is retained under the ignored
+`.exitzero/live-validation/clients-0.6.1/`: `verified.json`, each client's original
+`summary.json`, filtered events, scope logs, reviewed inputs, receipt copies and
+the replay/verifier scripts. No package implementation or version changed.
+
+## Original CLI attempts (2026-09-20)
 
 Both clients used isolated synthetic projects and the published exitzero 0.5.0
 wheel. Each project contained one Python syntax error, a generated policy and
@@ -37,9 +88,9 @@ for individuals tier and directed it to Antigravity. These are observations for
 the validation accounts, not claims that all accounts lack access.
 
 Policy, generated instructions and hook settings remained unchanged by both
-attempts; the seeded files remained broken. Setup receipts are configuration
-evidence only. Completing the live checks requires usable account quota/access
-and another actual fail→block→agent repair→pass session.
+original attempts; the seeded files remained broken. Setup receipts are
+configuration evidence only. The 0.6.1 retry above later completed Claude's
+native loop; Gemini still requires usable account access and a real repair run.
 
 ## Gemini timeout reproduction and fix
 
@@ -115,7 +166,8 @@ evidence.
 The successful headless run supersedes the earlier claim that this CLI version
 never executes hooks in `-p` mode. Project selection was explicit in both new
 runs; this does not establish why every earlier attempt failed. It also does not
-resolve the separate Claude Code and Gemini CLI account blockers.
+resolve the then-observed Claude Code and Gemini CLI account blockers. The later
+0.6.1 retry above records their current validation status.
 
 ## Devin CLI follow-up
 

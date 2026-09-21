@@ -144,10 +144,12 @@ repeat feedback. Gate violations exit 0 with the JSON decision; operational or
 invalid-input errors exit 2 and still persist a receipt.
 
 Claude Code may ask to approve the project hook on the next session before it
-fires; managed policies can disable project hooks entirely. A live attempt on
-Claude Code 2.1.278 (2026-09-20) ended with the validation account's weekly-limit
-HTTP 429 before a model response or Stop invocation. No live repair loop has
-been verified; see the [attempt and component evidence](LIVE_CLIENT_VALIDATION.md).
+fires; managed policies can disable project hooks entirely. Claude Code 2.1.278
+with `claude-sonnet-5` and published exitzero 0.6.1 completed a native
+fail→block→source repair→pass session on 2026-09-22 KST. It used print/restricted
+mode and scoped Read/Edit tools; both Stop receipts and unchanged configuration
+were verified. This supersedes the earlier account-limited attempt. See the
+[validation scope and evidence](LIVE_CLIENT_VALIDATION.md#claude-and-gemini-retry-with-061).
 
 ## Devin CLI (manual compatible hook)
 
@@ -218,7 +220,7 @@ and stopped again into a passing gate — the same repair loop as the Cursor
 adapter. Unlike Cursor's `-p`, Codex's non-interactive mode honors stop hooks,
 but trust review applies: persist trust in an interactive session first, or
 pass `--dangerously-bypass-hook-trust` for automation that vets its hook
-sources. Claude's separate live attempt remains quota-blocked.
+sources. Claude's separately verified native loop is recorded above.
 
 ## Gemini CLI
 
@@ -252,8 +254,9 @@ and preserves unrelated settings/hooks and other custom timeout values. Doctor
 flags the legacy budget even when its old fingerprint still matches. This does
 not make host timeouts a merge barrier; keep required CI checks.
 
-The Gemini CLI 0.44.1 live retry (2026-09-20) ended before model execution with
-`IneligibleTierError` / `UNSUPPORTED_CLIENT` for the validation account. Its
+The Gemini CLI 0.44.1 live retry with exitzero 0.6.1 (2026-09-22 KST) again ended
+before model execution with `IneligibleTierError` / `UNSUPPORTED_CLIENT` for the
+validation account. Its
 installed native HookRunner was separately tested without model calls: the old
 budget timed out, and the corrected installed hook returned block→pass with
 persisted receipts. This is component evidence; the live model repair loop

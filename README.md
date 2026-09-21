@@ -423,7 +423,7 @@ Gemini users upgrading from 0.5.0 or earlier should rerun
 This corrects the legacy 120-millisecond hook budget to 120000 milliseconds;
 `doctor --adapter gemini` detects installations still using the old value.
 See the [validation record](docs/LIVE_CLIENT_VALIDATION.md) for the native executor
-test and account-blocked Claude/Gemini live attempts.
+test, Claude's verified native repair loop and Gemini's account-blocked retry.
 
 exitzero also supports Copilot CLI `agentStop` and Git `pre-push`.
 Pre-push checks a clean committed tree and rejects pushed commits different from
