@@ -1,12 +1,15 @@
 """IDE adapters delegate to the shared runner and preserve existing hooks."""
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shlex
+import stat
 import subprocess
 import sys
+from copy import deepcopy
 
 from .api import Context, Finding
 from .files import is_sensitive, safe_path, sha256_file, validate_relative, write_atomic
@@ -36,6 +39,7 @@ ADAPTER_EVENTS = {
 # proceeding silently, and timeout bounds a hung gate command.
 HOOK_TIMEOUT_SECONDS = 120
 LEGACY_GEMINI_TIMEOUT_MS = 120
+_TRUST_BASE_RE = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})\Z")
 HOOK_MANAGED_NOTE = {
     "claude": "Approve or trust the project hook on the next Claude Code session; managed allowManagedHooksOnly policies can disable project hooks entirely.",
     "codex": "Codex gates hooks behind trust review; run /hooks or approve the hook prompt before the stop gate can fire.",
@@ -62,24 +66,57 @@ def _launcher() -> list[str]:
     return [sys.executable, str(checkout)] if checkout.is_file() else [sys.executable, "-P", "-m", "exitzero"]
 
 
-def expected_cursor_command(root: Path, policy_path: Path, slot: str = "PostToolUse") -> str:
-    return expected_adapter_command(root, policy_path, "cursor", slot)
+def _saved_trust_base(root: Path) -> str | None:
+    try:
+        value = _manifest(root).get("trust_base")
+    except (OSError, ValueError, UnicodeError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, str) and _TRUST_BASE_RE.fullmatch(value) else None
 
 
-def expected_adapter_command(root: Path, policy_path: Path, adapter: str, slot: str = "PostToolUse") -> str:
+def _resolve_trust_base(root: Path, trust_base: str | None) -> str | None:
+    if trust_base is None:
+        trust_base = _saved_trust_base(root)
+        if trust_base is None:
+            return None
+    if not isinstance(trust_base, str) or not trust_base.strip() or trust_base.startswith("-") or "\0" in trust_base:
+        raise ValueError("trust-base must name an available local commit")
+    from .authority import resolve
+    return resolve(root, trust_base)
+
+
+def expected_cursor_command(root: Path, policy_path: Path, slot: str = "PostToolUse",
+                            trust_base: str | None = None) -> str:
+    return expected_adapter_command(root, policy_path, "cursor", slot, trust_base=trust_base)
+
+
+def expected_adapter_command(root: Path, policy_path: Path, adapter: str, slot: str = "PostToolUse",
+                             trust_base: str | None = None) -> str:
+    root = Path(root).resolve()
+    policy_path = Path(policy_path).resolve()
     event = "stop" if slot == "PostToolUse" else "preToolUse"
-    return shlex.join([*_launcher(), "--root", str(root), "--policy", str(policy_path.relative_to(root)),
-                       "hooks", "run", "--adapter", adapter, "--event", event])
+    command = [*_launcher(), "--root", str(root), "--policy", str(policy_path.relative_to(root)),
+               "hooks", "run", "--adapter", adapter, "--event", event]
+    effective = _resolve_trust_base(root, trust_base)
+    if effective:
+        command.append("--use-installed-authority")
+    return shlex.join(command)
 
 
-def expected_git_hook(root: Path, policy_path: Path, slot: str = "pre-commit") -> str:
-    command = shlex.join([*_launcher(), "--root", str(root), "--policy", policy_path.relative_to(root).as_posix(),
-                          "hooks", "run", "--slot", slot])
-    return "#!/bin/sh\n# exitzero managed hook\nexec " + command + "\n"
+def expected_git_hook(root: Path, policy_path: Path, slot: str = "pre-commit",
+                      trust_base: str | None = None) -> str:
+    root = Path(root).resolve()
+    policy_path = Path(policy_path).resolve()
+    command = [*_launcher(), "--root", str(root), "--policy", policy_path.relative_to(root).as_posix(),
+               "hooks", "run", "--slot", slot]
+    effective = _resolve_trust_base(root, trust_base)
+    if effective:
+        command.append("--use-installed-authority")
+    return "#!/bin/sh\n# exitzero managed hook\nexec " + shlex.join(command) + "\n"
 
 
-def expected_copilot_entry(root: Path, policy_path: Path) -> dict:
-    argv = shlex.split(expected_adapter_command(root, policy_path, "copilot"))
+def expected_copilot_entry(root: Path, policy_path: Path, trust_base: str | None = None) -> dict:
+    argv = shlex.split(expected_adapter_command(root, policy_path, "copilot", trust_base=trust_base))
     return {"type": "command", "exec": argv[0], "args": argv[1:], "timeoutSec": HOOK_TIMEOUT_SECONDS}
 
 
@@ -122,7 +159,9 @@ def _manifest(root: Path) -> dict:
                 or any(not isinstance(digest, str) or len(digest) != 64 for digest in value["files"].values())
                 or ("entries" in value and (not isinstance(value["entries"], dict)
                     or any(not isinstance(digest, str) or len(digest) != 64
-                           for digest in value["entries"].values())))):
+                           for digest in value["entries"].values())))
+                or ("trust_base" in value and (not isinstance(value["trust_base"], str)
+                    or not _TRUST_BASE_RE.fullmatch(value["trust_base"])))):
             raise ValueError("Invalid hook installation manifest")
         value.setdefault("entries", {})
         return value
@@ -208,12 +247,65 @@ def cursor_hook_error(entry: object) -> str | None:
     return None
 
 
-def install(root: Path, policy_path: Path, adapter: str) -> str:
-    manifest = _manifest(root)
+def _prepare_target(root: Path, relative: str) -> tuple[Path, bytes | None, int | None]:
+    """Resolve a hook target and capture its safe, regular-file state."""
+    path = safe_path(root, relative)
+    for parent in (path.parent, *path.parent.parents):
+        if parent == root.parent:
+            break
+        if parent == root:
+            break
+        if os.path.lexists(parent) and (parent.is_symlink() or not parent.is_dir()):
+            raise ValueError("Hook target parent must be a regular directory")
+    if os.path.lexists(path) and not path.is_file():
+        raise ValueError("Hook target must be a regular file")
+    if path.is_file():
+        metadata = path.stat()
+        return path, path.read_bytes(), stat.S_IMODE(metadata.st_mode)
+    return path, None, None
+
+
+def _valid_hook_timeout(value: object) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and value > 0)
+
+
+def _copy_manifest(value: dict) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError("Invalid hook installation manifest")
+    manifest = deepcopy(value)
+    if (type(manifest.get("version")) is not int or manifest["version"] != 1
+            or not isinstance(manifest.get("files"), dict)
+            or not isinstance(manifest.get("entries"), dict)
+            or any(not isinstance(digest, str) or len(digest) != 64
+                   for digest in (*manifest["files"].values(), *manifest["entries"].values()))
+            or ("trust_base" in manifest and (not isinstance(manifest["trust_base"], str)
+                or not _TRUST_BASE_RE.fullmatch(manifest["trust_base"])))):
+        raise ValueError("Invalid hook installation manifest")
+    return manifest
+
+
+def prepare_install(root: Path, policy_path: Path, adapter: str, manifest: dict | None = None,
+                    *, trust_base: str | None = None, strict_cursor: bool = False) -> dict:
+    """Prepare one adapter installation without publishing any files.
+
+    The returned record is intentionally an internal planning shape consumed by
+    :func:`install` and the multi-client packer.  ``content`` is kept in memory
+    only for publication; callers must not expose it in receipts or diagnostics.
+    """
+    root = Path(root)
+    policy_path = Path(policy_path)
+    source_manifest = _manifest(root) if manifest is None else _copy_manifest(manifest)
+    manifest = _copy_manifest(source_manifest)
+    saved_trust_base = source_manifest.get("trust_base") if trust_base is None else None
+    effective_trust_base = (_resolve_trust_base(root, saved_trust_base)
+                            if saved_trust_base is not None else _resolve_trust_base(root, trust_base))
+    if effective_trust_base is not None:
+        manifest["trust_base"] = effective_trust_base
     entry_digest: str | None = None
     if adapter == "cursor":
         relative = ".cursor/hooks.json"
-        path = safe_path(root, relative)
+        path, before, mode = _prepare_target(root, relative)
         data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"version": 1, "hooks": {}}
         if (not isinstance(data, dict) or type(data.get("version")) is not int
                 or data["version"] != 1 or not isinstance(data.get("hooks"), dict)):
@@ -221,7 +313,19 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         hooks = data["hooks"].setdefault("stop", [])
         if not isinstance(hooks, list) or any(cursor_hook_error(h) for h in hooks):
             raise ValueError("Invalid existing Cursor stop hooks")
-        command = expected_cursor_command(root, policy_path)
+        command = expected_cursor_command(root, policy_path, trust_base=effective_trust_base)
+        if strict_cursor or effective_trust_base is not None:
+            for prior in hooks:
+                prior_command = prior.get("command") if isinstance(prior, dict) else None
+                if _exitzero_managed("cursor", prior_command):
+                    if prior.get("failClosed") is False:
+                        raise ValueError("Existing Cursor exitzero hook disables failClosed; repair it manually")
+                    if "timeout" in prior and not _valid_hook_timeout(prior["timeout"]):
+                        raise ValueError("Existing Cursor exitzero hook has an invalid timeout; repair it manually")
+            hooks[:] = [prior for prior in hooks
+                        if not (isinstance(prior, dict)
+                                and prior.get("command") != command
+                                and _exitzero_managed("cursor", prior.get("command")))]
         owned = next((h for h in hooks if h.get("type", "command") == "command" and h.get("command") == command), None)
         if owned is None:
             hooks.append({"command": command, "loop_limit": 1,
@@ -233,7 +337,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     elif adapter == "copilot":
         relative = ".github/hooks/exitzero.json"
-        path = safe_path(root, relative)
+        path, before, mode = _prepare_target(root, relative)
         data = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {"version": 1, "hooks": {}}
         if (not isinstance(data, dict) or type(data.get("version")) is not int or data["version"] != 1
                 or not isinstance(data.get("hooks"), dict)):
@@ -241,7 +345,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         entries = data["hooks"].setdefault("agentStop", [])
         if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
             raise ValueError("Invalid Copilot agentStop entries")
-        expected = expected_copilot_entry(root, policy_path)
+        expected = expected_copilot_entry(root, policy_path, trust_base=effective_trust_base)
         entries[:] = [entry for entry in entries if not (
             isinstance(entry.get("args"), list) and all(isinstance(arg, str) for arg in entry["args"])
             and _exitzero_managed(adapter, shlex.join([str(entry.get("exec", "")), *entry["args"]])))]
@@ -251,7 +355,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         # All three read a nested hook list; the event key and file differ per
         # adapter. Shared settings files track drift per entry, not per file.
         relative, event, shared = SETTINGS_ADAPTERS[adapter]
-        path = safe_path(root, relative)
+        path, before, mode = _prepare_target(root, relative)
         if path.is_file():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -261,7 +365,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
                 raise ValueError("Existing hook configuration must be a JSON object")
         else:
             data = {}
-        command = expected_adapter_command(root, policy_path, adapter)
+        command = expected_adapter_command(root, policy_path, adapter, trust_base=effective_trust_base)
         data = _merge_settings_hooks(data, command, adapter, event)
         content = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
         if shared:
@@ -273,7 +377,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
         # non-Stop events under our name are preserved; stale exitzero Stop
         # entries are pruned so reinstalls do not stack.
         relative = ".agents/hooks.json"
-        path = safe_path(root, relative)
+        path, before, mode = _prepare_target(root, relative)
         if path.is_file():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -283,7 +387,7 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
                 raise ValueError("Existing hook configuration must be a JSON object")
         else:
             data = {}
-        command = expected_adapter_command(root, policy_path, adapter)
+        command = expected_adapter_command(root, policy_path, adapter, trust_base=effective_trust_base)
         spec = data.setdefault(AGY_HOOK_NAME, {})
         if not isinstance(spec, dict):
             raise ValueError(f"Existing '{AGY_HOOK_NAME}' hook must be an object")
@@ -314,21 +418,46 @@ def install(root: Path, policy_path: Path, adapter: str) -> str:
             relative = candidate.relative_to(root).as_posix()
         except ValueError:
             raise ValueError("External Git hook directories require manual CLI installation") from None
-        path = safe_path(root, relative)
-        content = expected_git_hook(root, policy_path, adapter)
+        path, before, mode = _prepare_target(root, relative)
+        content = expected_git_hook(root, policy_path, adapter, trust_base=effective_trust_base)
         if path.is_file() and path.read_text(encoding="utf-8") != content:
-            raise ValueError("Existing pre-commit hook preserved; chain the CLI manually")
-    write_atomic(path, content)
+            recorded = manifest["files"].get(relative)
+            current_digest = hashlib.sha256(before).hexdigest() if before is not None else None
+            managed_format = path.read_text(encoding="utf-8").startswith(
+                "#!/bin/sh\n# exitzero managed hook\nexec ")
+            if recorded != current_digest or not managed_format:
+                raise ValueError("Existing Git hook preserved; chain the CLI manually")
+    before_mode = mode
     if adapter in {"pre-commit", "pre-push"}:
-        path.chmod(path.stat().st_mode | 0o111)
+        mode = (mode | 0o111) if mode is not None else 0o755
+    elif mode is None:
+        mode = 0o644
+    content_bytes = content.encode("utf-8")
     if entry_digest is not None:
         manifest["entries"][relative] = entry_digest
         manifest["files"].pop(relative, None)
     else:
-        manifest["files"][relative] = sha256_file(path)
+        manifest["files"][relative] = hashlib.sha256(content_bytes).hexdigest()
         manifest["entries"].pop(relative, None)
+    return {"relative": relative, "content": content, "mode": mode,
+            "before": before, "before_mode": before_mode,
+            "entry_digest": entry_digest, "manifest": manifest}
+
+
+def install(root: Path, policy_path: Path, adapter: str, *, trust_base: str | None = None) -> str:
+    """Install one adapter using the same merge behavior as before."""
+    from .policy import load_policy
+    policy = load_policy(Path(policy_path))
+    effective_trust_base = _resolve_trust_base(Path(root), trust_base)
+    if "permissions" in policy and effective_trust_base is None:
+        raise ValueError("Permission zones require an operator-supplied trust-base before installing hooks")
+    prepared = prepare_install(root, policy_path, adapter, trust_base=effective_trust_base)
+    relative = prepared["relative"]
+    path = safe_path(root, relative)
+    write_atomic(path, prepared["content"])
+    path.chmod(prepared["mode"] | 0o111 if adapter in {"pre-commit", "pre-push"} else prepared["mode"])
     write_atomic(safe_path(root, ".exitzero/hooks.json"),
-                 json.dumps(manifest, sort_keys=True, indent=2) + "\n")
+                 json.dumps(prepared["manifest"], sort_keys=True, indent=2) + "\n")
     return relative
 
 

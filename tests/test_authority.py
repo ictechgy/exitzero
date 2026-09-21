@@ -155,6 +155,22 @@ class AuthorityTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(json.loads(result.stdout)["permissions"]["base_commit"], self.base)
 
+    def test_installed_authority_flag_requires_a_valid_pin(self):
+        manifest = self.root / ".exitzero/hooks.json"
+        manifest.parent.mkdir()
+        manifest.write_text(json.dumps({"version": 1, "files": {}, "entries": {}, "trust_base": self.base}))
+        command = [sys.executable, str(CLI), "--root", str(self.root), "hooks", "run", "--slot", "CI",
+                   "--use-installed-authority", "--format", "json"]
+        passed = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertEqual(json.loads(passed.stdout)["permissions"]["base_commit"], self.base)
+        manifest.unlink()
+        failed = subprocess.run(command, capture_output=True, text=True, timeout=20)
+        self.assertEqual(failed.returncode, 2, failed.stdout + failed.stderr)
+        receipt = json.loads(failed.stdout)
+        self.assertEqual(receipt["checks"], [])
+        self.assertIn("core.hook-input", {f["rule"] for f in receipt["findings"]})
+
     def test_doctor_reports_missing_external_authority_without_executing_checks(self):
         receipt = run(self.root, "exitzero.toml", "doctor")
         self.assertEqual(receipt["exit_code"], 0)

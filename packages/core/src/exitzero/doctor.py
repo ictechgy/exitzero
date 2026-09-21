@@ -71,6 +71,9 @@ def _entries(data: dict, adapter: str) -> list[dict]:
 def diagnose(context: Context, required_adapter: str | None = None) -> tuple[list[dict], list[Finding]]:
     if required_adapter is not None and required_adapter not in ADAPTERS:
         raise ValueError("Unsupported doctor adapter")
+    required = set(context.policy.get("clients", {}).get("adapters", []))
+    if required_adapter is not None:
+        required.add(required_adapter)
     manifest = _manifest(context.root)
     recorded = set(manifest["files"]) | set(manifest["entries"])
     drift = {finding.path for finding in lint_installed(context)
@@ -166,7 +169,7 @@ def diagnose(context: Context, required_adapter: str | None = None) -> tuple[lis
             item.update(state="misconfigured", detail="A Git hook installation is recorded at a different or unresolved hook path.",
                         next_step="Review core.hooksPath and reinstall at the active path; external directories require manual setup.")
             findings.append(Finding("doctor.hook-inactive", item["detail"], relative))
-        if required_adapter == adapter and item["state"] != "configured":
+        if adapter in required and item["state"] != "configured":
             findings.append(Finding("doctor.required-adapter", "The requested adapter is not configured for this project.", relative))
         if adapter == "cursor":
             item["detail"] += " Stop provides repair feedback, not merge protection; headless stop behavior is client-version dependent."

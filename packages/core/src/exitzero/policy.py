@@ -9,6 +9,7 @@ import tomllib
 from .api import CheckSpec
 from .authority import validate_permissions
 from .files import safe_path, validate_relative, write_atomic
+from .hooks import ADAPTER_EVENTS
 
 BEGIN = "<!-- exitzero:begin -->"
 END = "<!-- exitzero:end -->"
@@ -151,7 +152,7 @@ def load_policy(path: Path) -> dict:
 def parse_policy(text: str) -> dict:
     """Validate policy text before a generator writes it to disk."""
     policy = tomllib.loads(text)
-    if set(policy) - {"version", "plugins", "checks", "harness", "requirements", "permissions"}:
+    if set(policy) - {"version", "plugins", "checks", "harness", "requirements", "permissions", "clients"}:
         raise ValueError("Unknown top-level policy key")
     if type(policy.get("version")) is not int or policy["version"] != 1:
         raise ValueError("Policy version must be 1")
@@ -189,6 +190,14 @@ def parse_policy(text: str) -> dict:
     _validate_requirements(policy.get("requirements", []), ids)
     if "permissions" in policy:
         validate_permissions(policy["permissions"])
+    if "clients" in policy:
+        clients = policy["clients"]
+        allowed = set(ADAPTER_EVENTS) | {"pre-commit", "pre-push"}
+        if (not isinstance(clients, dict) or set(clients) != {"adapters"}
+                or not isinstance(clients["adapters"], list) or not clients["adapters"]
+                or any(not isinstance(name, str) or name not in allowed for name in clients["adapters"])
+                or len(clients["adapters"]) != len(set(clients["adapters"]))):
+            raise ValueError("clients.adapters must be a nonempty array of unique supported adapters")
     return policy
 
 
@@ -242,6 +251,10 @@ def render_agents(policy: dict) -> str:
         for zone in ("editable", "protected", "immutable"):
             lines.append(f"- {zone}: {', '.join(policy['permissions'][zone]) or '(none)'}")
         lines.append("Unclassified changes fail; protected changes require independent review. The policy itself is immutable.")
+    if "clients" in policy:
+        lines.extend(["", "Policy pack adapters: " + ", ".join(policy["clients"]["adapters"]),
+                      "Run `exitzero policy-pack` to preview changes, then `exitzero policy-pack --apply` and `exitzero doctor`.",
+                      "Client hooks have different enforcement limits; required CI provides merge protection."])
     lines.extend(["", f"Policy SHA-256: `{digest}`", END])
     return "\n".join(lines)
 

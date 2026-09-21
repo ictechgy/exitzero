@@ -47,9 +47,10 @@ policy digest, changed paths, zone decisions and before/after digests.
 `ledger-publish` carries these decisions into its JSON and Markdown records.
 They remain local unsigned observations unless an external CI attestation
 workflow authenticates the receipt. A policy with zones requires `--trust-base`
-for `check` and hook runs. `lint-config` validates the declaration; `doctor`
+for `check` and hook runs, or an operator pin installed through the
+[policy pack](POLICY_PACKS.md). `lint-config` validates the declaration; `doctor`
 without a base reports that authority has not been inspected. Hook installation
-does not choose a trusted reference on the user's behalf.
+accepts an explicit `--trust-base`; it does not choose one on the user's behalf.
 
 ## Scope and limits
 
