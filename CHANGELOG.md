@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1
+
+- Distinguish absent Python connections from matching uses found only in
+  unsupported conditional or repeated code, including `with` bodies. Findings
+  point to the first matching use and recommend an executable contract check.
+  Supported syntax, check IDs and warn/block behavior remain unchanged.
+- Verify both diagnostics through the CLI, persisted receipts, SARIF and the
+  installed wheel's trusted-policy scenario.
+
 ## 0.5.1 — released 2026-09-20
 
 - Fix Gemini hook timeouts to use milliseconds: new installations receive
