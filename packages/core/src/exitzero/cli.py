@@ -47,12 +47,15 @@ def parser() -> argparse.ArgumentParser:
         child = commands.add_parser(name)
         child.add_argument("--format", choices=("human", "json", "sarif"), default="human")
         if name == "check":
+            child.add_argument("--trust-base", metavar="REF",
+                               help="Enforce permission zones from an independently trusted local Git commit")
             child.add_argument("--reuse", action="store_true",
                                help="Reuse passing check results when a check's selected inputs are unchanged since a prior receipt")
             child.add_argument("--diff", metavar="REF",
                                help="Limit checks to files changed relative to a git ref or range such as origin/main...HEAD")
     doctor = commands.add_parser("doctor", help="Diagnose project policy and hook setup without running checks")
     doctor.add_argument("--format", choices=("human", "json"), default="human")
+    doctor.add_argument("--trust-base", metavar="REF", help="Inspect permission zones from a trusted local commit")
     doctor.add_argument("--adapter", choices=ADAPTERS,
                         help="Require this adapter to be configured; other adapters remain optional")
     hooks = commands.add_parser("hooks").add_subparsers(dest="hook_command", required=True)
@@ -64,6 +67,7 @@ def parser() -> argparse.ArgumentParser:
     hook_run.add_argument("--event", choices=sorted({event for events in ADAPTER_EVENTS.values() for event in events}),
                         default="stop")
     hook_run.add_argument("--format", choices=("human", "json"), default="human")
+    hook_run.add_argument("--trust-base", metavar="REF", help="Trusted local Git commit for permission zones")
     report = commands.add_parser("report")
     report.add_argument("--run-id", help="Select one persisted receipt instead of the latest run")
     report.add_argument("--format", choices=("human", "json", "sarif", "intoto"), default="human")
@@ -267,7 +271,8 @@ def main(argv: list[str] | None = None) -> int:
         receipt = run(root, args.policy, args.command,
                       reuse=args.command == "check" and args.reuse,
                       diff=args.diff if args.command == "check" else None,
-                      doctor_adapter=args.adapter if args.command == "doctor" else None)
+                      doctor_adapter=args.adapter if args.command == "doctor" else None,
+                      trust_base=getattr(args, "trust_base", None))
         emit(receipt, args.format)
         return receipt["exit_code"]
     if args.command == "hooks" and args.hook_command == "run":
@@ -284,10 +289,10 @@ def main(argv: list[str] | None = None) -> int:
                         raise ValueError("Invalid Cursor payload")
                 except (ValueError, OSError, RecursionError):
                     # Still execute and persist the actual gate outcome for every invocation.
-                    receipt = run(root, args.policy, "check", events[args.event], input_error=True)
+                    receipt = run(root, args.policy, "check", events[args.event], input_error=True, trust_base=args.trust_base)
                     print(json.dumps({"error": "Invalid Cursor JSON input", "receipt": receipt["receipt"]}))
                     return 2
-                receipt = run(root, args.policy, "check", events[args.event])
+                receipt = run(root, args.policy, "check", events[args.event], trust_base=args.trust_base)
                 print(json.dumps(cursor_response(receipt, args.event, payload)))
                 # Cursor reads the JSON protocol; generic adapters expose unchanged gate codes.
                 return 0 if receipt["exit_code"] != 2 else 2
@@ -298,13 +303,13 @@ def main(argv: list[str] | None = None) -> int:
                 if not isinstance(payload, dict):
                     raise ValueError("Invalid hook payload")
             except (ValueError, OSError, RecursionError):
-                receipt = run(root, args.policy, "check", events[args.event], input_error=True)
+                receipt = run(root, args.policy, "check", events[args.event], input_error=True, trust_base=args.trust_base)
                 if args.adapter == "copilot":
                     print(json.dumps(copilot_response(receipt, args.event)))
                     return 0
                 print(json.dumps({"error": f"Invalid {args.adapter} JSON input", "receipt": receipt["receipt"]}))
                 return 2
-            receipt = run(root, args.policy, "check", events[args.event])
+            receipt = run(root, args.policy, "check", events[args.event], trust_base=args.trust_base)
             if args.adapter == "copilot":
                 print(json.dumps(copilot_response(receipt, args.event)))
                 return 0
@@ -318,7 +323,7 @@ def main(argv: list[str] | None = None) -> int:
                 push_error = len(payload) > 1024 * 1024 or not valid_push_input(root, payload)
             except (OSError, UnicodeError):
                 push_error = True
-        receipt = run(root, args.policy, "check", args.slot, input_error=push_error)
+        receipt = run(root, args.policy, "check", args.slot, input_error=push_error, trust_base=args.trust_base)
         emit(receipt, args.format)
         return receipt["exit_code"]
     try:

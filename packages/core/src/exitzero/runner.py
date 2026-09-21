@@ -10,6 +10,7 @@ import subprocess
 
 from . import __version__
 from .api import CheckSpec, Context, Finding, Registry
+from .authority import AuthorityDenied, inspect as inspect_authority, finish as finish_authority
 from .doctor import diagnose, input_paths as doctor_inputs
 from .files import EXCLUDED, is_sensitive, match_path, safe_path, select_files, sha256_file
 from .ledger import persist
@@ -224,7 +225,7 @@ def _narrow_specs(checks: list[CheckSpec], changed: list[str]) -> list[CheckSpec
 
 def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         input_error: bool = False, reuse: bool = False, diff: str | None = None,
-        doctor_adapter: str | None = None) -> dict:
+        doctor_adapter: str | None = None, trust_base: str | None = None) -> dict:
     started = time.monotonic()
     receipt = {"schema_version": 1, "tool_version": __version__, "run_id": uuid.uuid4().hex,
                "started_at": datetime.now(timezone.utc).isoformat(), "command": command,
@@ -233,15 +234,26 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
     findings: list[Finding] = []
     operational_error = False
     inputs_changed = False
+    authority_state = None
     verification_outcomes: dict[str, str] = {}
     if command == "doctor":
         receipt["diagnostics"] = []
     try:
+        if trust_base is not None:
+            receipt["permissions"], result, authority_state = inspect_authority(root, policy_name, trust_base)
+            findings.extend(result)
+            # Reject self-authorized edits before loading candidate plugins or commands.
+            if result:
+                raise AuthorityDenied()
         path = safe_path(root, policy_name)
         if not path.is_file():
             raise ValueError("Policy must be a regular file")
         receipt["policy_sha256"] = sha256_file(path)
-        policy = load_policy(path)
+        # With independent authority, even a concurrent candidate-policy swap
+        # must not change which plugins/commands are dispatched.
+        policy = authority_state["policy"] if authority_state is not None else load_policy(path)
+        if "permissions" in policy and trust_base is None and command not in {"lint-config", "doctor"}:
+            raise ValueError("Permission zones require an independently supplied trust-base")
         if "requirements" in policy:
             receipt["requirements"] = [{"id": requirement["id"], "checks": list(requirement["checks"]),
                                         "status": "unverified"} for requirement in policy["requirements"]]
@@ -283,6 +295,13 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         if command == "doctor":
             receipt["diagnostics"], result = diagnose(context, doctor_adapter)
             findings.extend(result)
+            if "permissions" in policy:
+                receipt["diagnostics"].append({
+                    "target": "permissions", "state": "configured" if authority_state else "unknown",
+                    "runtime": "unverified", "path": policy_name,
+                    "detail": "Permission zones require an independently trusted baseline; they do not prevent filesystem writes.",
+                    "next_step": "Supply --trust-base from trusted CI or an operator; protect the gate runner and invocation too.",
+                })
         if command not in {"lint-config", "doctor"}:
             reusable = (_reusable_checks(root, check_inputs, receipt["inputs"],
                                          receipt["policy_sha256"], checks)
@@ -324,8 +343,16 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         if _snapshot(context, registry, check_specs=checks, doctor=command == "doctor") != receipt["inputs"]:
             inputs_changed = True
             findings.append(Finding("core.inputs-changed", "Inspected files changed during the run; rerun against stable inputs."))
+        if authority_state is not None and not finish_authority(root, authority_state):
+            inputs_changed = True
+            receipt["permissions"]["status"] = "unverified"
+            findings.append(Finding("core.authority-changed", "Trusted authority or inspected worktree changed during the run."))
+    except AuthorityDenied:
+        pass
     except (Exception, SystemExit, KeyboardInterrupt) as error:
         operational_error = True
+        if "permissions" in receipt:
+            receipt["permissions"]["status"] = "unverified"
         # Exception text may contain TOML values, file content or credentials.
         findings.append(Finding("core.error", f"Unable to complete run ({type(error).__name__}); inspect policy, paths and plugin settings."))
     if input_error:
@@ -344,6 +371,8 @@ def run(root: Path, policy_name: str, command: str, slot: str | None = None, *,
         persist(root, receipt)
     except (OSError, ValueError):
         receipt["exit_code"], receipt["status"], receipt["receipt"] = 2, "error", None
+        if "permissions" in receipt:
+            receipt["permissions"]["status"] = "unverified"
         for requirement in receipt.get("requirements", []):
             if requirement["status"] == "checks_passed":
                 requirement["status"] = "unverified"

@@ -172,7 +172,7 @@ def _load_receipts(root: Path, since: datetime | None) -> tuple[list[dict[str, A
         # Keep only the fields aggregation needs; the per-file ``inputs`` hash
         # map dominates receipt size and must not accumulate in memory.
         receipts.append({key: receipt.get(key)
-                         for key in ("command", "status", "receipt", "findings")})
+                         for key in ("command", "status", "receipt", "findings", "permissions")})
     return receipts, corrupt
 
 
@@ -194,7 +194,22 @@ def _build_record(context: Context, receipts: list[dict[str, Any]],
     by_status: dict[str, int] = {}
     rules: dict[str, int] = {}
     implicated: dict[str, dict[str, Any]] = {}
+    permissions = []
     for receipt in receipts:
+        permission = receipt.get("permissions")
+        if isinstance(permission, dict) and isinstance(permission.get("changes"), list):
+            changes = []
+            for change in permission["changes"]:
+                if (isinstance(change, dict) and _implicated_path(change.get("path"))
+                        and isinstance(change.get("zone"), str) and isinstance(change.get("decision"), str)
+                        and change.get("zone") in {"editable", "protected", "immutable", "unclassified"}
+                        and change.get("decision") in {"allowed", "review_required", "denied"}):
+                    changes.append({key: change[key] for key in ("path", "zone", "decision")})
+            commit = permission.get("base_commit")
+            if isinstance(commit, str) and re.fullmatch(r"[a-f0-9]{40}|[a-f0-9]{64}", commit):
+                permissions.append({"receipt": receipt.get("receipt"), "base_commit": commit,
+                                    "status": permission.get("status") if isinstance(permission.get("status"), str) and permission.get("status") in
+                                    {"passed", "failed", "unverified"} else "unverified", "changes": changes})
         command = str(receipt.get("command", "?"))
         status = str(receipt.get("status", "?"))
         by_command[command] = by_command.get(command, 0) + 1
@@ -237,6 +252,7 @@ def _build_record(context: Context, receipts: list[dict[str, Any]],
         "by_command": by_command,
         "by_status": by_status,
         "findings_by_rule": rules,
+        "permission_runs": permissions,
         "rollback_hints": hints,
         "run_refs": [receipt.get("receipt") for receipt in receipts
                      if isinstance(receipt.get("receipt"), str)],
@@ -338,6 +354,14 @@ def _render_markdown(record: dict[str, Any]) -> str:
         f"- Commands: {', '.join(f'{_md(name)} {count}' for name, count in sorted(record['by_command'].items())) or 'none'}",
         "",
     ]
+    if record.get("permission_runs"):
+        lines.extend(["### Permission decisions", "",
+                      "Recorded merge-time decisions; not a filesystem sandbox or a verified human approval."])
+        for run in record["permission_runs"]:
+            lines.append(f"- Base {_md(run['base_commit'])}: {_md(run['status'])}")
+            for change in run["changes"]:
+                lines.append(f"  - {_md(change['path'])}: {_md(change['zone'])}, {_md(change['decision'])}")
+        lines.append("")
     hints = record["rollback_hints"]
     if hints["implicated_paths"]:
         lines.append("### Rollback hints — implicated paths")

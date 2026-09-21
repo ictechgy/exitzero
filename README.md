@@ -263,6 +263,12 @@ individual categories. Set `reuse = false` on this check — the baseline lives
 outside hashed file inputs, so unchanged worktree files could otherwise reuse
 a stale pass after the base ref moves.
 
+For projects that need to limit agent self-edits, [permission zones](docs/PERMISSION_ZONES.md)
+compare changed paths with a policy from an independently trusted commit.
+Editable changes can proceed; protected and immutable changes fail with distinct
+decisions in the receipt and ledger. The candidate cannot authorize its own policy
+change. This is a merge-time check; it does not sandbox filesystem writes.
+
 ## Commands and outcomes
 
 Each check can declare `enforcement = "warn"` for

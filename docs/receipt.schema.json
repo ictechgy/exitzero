@@ -30,12 +30,13 @@
     }, "additionalProperties": false}},
     "diagnostics": {"type": "array", "description": "Project setup observations from doctor, not evidence of runtime enforcement.", "items": {
       "type": "object", "required": ["target", "state", "runtime", "path", "detail", "next_step"], "properties": {
-        "target": {"enum": ["cursor", "claude", "codex", "gemini", "agy", "copilot", "pre-commit", "pre-push", "CI"]},
+        "target": {"enum": ["cursor", "claude", "codex", "gemini", "agy", "copilot", "pre-commit", "pre-push", "CI", "permissions"]},
         "state": {"enum": ["configured", "missing", "unmanaged", "misconfigured", "unknown"]},
         "runtime": {"const": "unverified"},
         "path": {"type": ["string", "null"]}, "detail": {"type": "string"}, "next_step": {"type": "string"}
       }, "additionalProperties": false
     }},
+    "permissions": {"type":"object","description":"Change decisions under permission zones loaded from an independently supplied Git commit; not runtime sandbox evidence.","required":["base_commit","policy_sha256","status","changes","coverage","git_object_format"],"properties":{"base_commit":{"type":"string","pattern":"^([a-f0-9]{40}|[a-f0-9]{64})$"},"policy_sha256":{"type":"string","pattern":"^[a-f0-9]{64}$"},"status":{"enum":["passed","failed","unverified"]},"coverage":{"const":"tracked-and-unignored"},"git_object_format":{"enum":["sha1","sha256"]},"changes":{"type":"array","items":{"type":"object","required":["path","zone","decision","change","before_blob","after_sha256"],"properties":{"path":{"type":"string"},"zone":{"enum":["editable","protected","immutable","unclassified"]},"decision":{"enum":["allowed","review_required","denied"]},"change":{"enum":["added","deleted","modified"]},"before_blob":{"type":["string","null"],"pattern":"^([a-f0-9]{40}|[a-f0-9]{64})$"},"after_sha256":{"type":["string","null"],"pattern":"^[a-f0-9]{64}$"}},"additionalProperties":false}}},"additionalProperties":false},
     "findings": {"type": "array", "items": {"type": "object", "required": ["rule", "message", "path", "line", "severity"], "properties": {
       "rule": {"type": "string"}, "message": {"type": "string"}, "path": {"type": ["string", "null"]}, "line": {"type": ["integer", "null"], "minimum": 1}, "severity": {"enum": ["error", "warning"]},
       "category": {"enum": ["violation", "execution"]}

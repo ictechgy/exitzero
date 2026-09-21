@@ -7,6 +7,7 @@ import re
 import tomllib
 
 from .api import CheckSpec
+from .authority import validate_permissions
 from .files import safe_path, validate_relative, write_atomic
 
 BEGIN = "<!-- exitzero:begin -->"
@@ -150,7 +151,7 @@ def load_policy(path: Path) -> dict:
 def parse_policy(text: str) -> dict:
     """Validate policy text before a generator writes it to disk."""
     policy = tomllib.loads(text)
-    if set(policy) - {"version", "plugins", "checks", "harness", "requirements"}:
+    if set(policy) - {"version", "plugins", "checks", "harness", "requirements", "permissions"}:
         raise ValueError("Unknown top-level policy key")
     if type(policy.get("version")) is not int or policy["version"] != 1:
         raise ValueError("Policy version must be 1")
@@ -186,6 +187,8 @@ def parse_policy(text: str) -> dict:
     if not isinstance(policy.get("harness", {}), dict):
         raise ValueError("harness must be a table")
     _validate_requirements(policy.get("requirements", []), ids)
+    if "permissions" in policy:
+        validate_permissions(policy["permissions"])
     return policy
 
 
@@ -234,6 +237,11 @@ def render_agents(policy: dict) -> str:
         for requirement in policy["requirements"]:
             checks = ", ".join(f"`{check}`" for check in requirement["checks"]) or "unverified (no checks)"
             lines.append(f"- `{requirement['id']}` -> {checks}")
+    if "permissions" in policy:
+        lines.extend(["", "Permission zones require an independently supplied `--trust-base` commit:"])
+        for zone in ("editable", "protected", "immutable"):
+            lines.append(f"- {zone}: {', '.join(policy['permissions'][zone]) or '(none)'}")
+        lines.append("Unclassified changes fail; protected changes require independent review. The policy itself is immutable.")
     lines.extend(["", f"Policy SHA-256: `{digest}`", END])
     return "\n".join(lines)
 

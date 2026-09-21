@@ -78,6 +78,14 @@ leaves requirement mappings unverified without failing for missing execution.
 Its extra project hook inputs are included in both stability snapshots.
 There is no new plugin registration method; `doctor` is a reserved core command.
 
+An optional policy `permissions` table declares `editable`, `protected` and
+`immutable` path arrays. Core enforces these only against an independently
+supplied `--trust-base` Git commit, before plugin discovery. Zone violations
+cannot be downgraded by check enforcement settings. Receipts may include a
+`permissions` record with the trusted commit/digest and per-path decisions;
+the ledger preserves these observations. See [permission zones](PERMISSION_ZONES.md)
+for authority, coverage and review limits.
+
 Shared helpers: plugins may import `exitzero.api` and `exitzero.services`;
 every other core module is internal and outside the `API_VERSION` contract.
 Policy generators can use `parse_policy(text)` to validate a proposed policy
